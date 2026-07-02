@@ -108,30 +108,50 @@ def chat():
         total_tokens = 0
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        with client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a senior cloud engineer assistant. "
-                               "Provide specific, practical answers based on "
-                               "the organizational context provided."
-                },
-                {
-                    "role": "user",
-                    "content": enriched_prompt
-                }
-            ],
-            max_tokens=1000,
-            temperature=0.3,
-            stream=True
-        ) as stream:
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    token = chunk.choices[0].delta.content
-                    total_tokens += 1
-                    payload = {"type": "token", "content": token}
-                    yield f"data: {json.dumps(payload)}\n\n"
+        try:
+            with client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a senior cloud engineer assistant. "
+                                   "Provide specific, practical answers based on "
+                                   "the organizational context provided."
+                    },
+                    {
+                        "role": "user",
+                        "content": enriched_prompt
+                    }
+                ],
+                max_tokens=1000,
+                temperature=0.3,
+                stream=True
+            ) as stream:
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        token = chunk.choices[0].delta.content
+                        total_tokens += 1
+                        payload = {"type": "token", "content": token}
+                        yield f"data: {json.dumps(payload)}\n\n"
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            if "rate_limit" in error_str:
+                error_msg = "⚠️ Too many requests right now. Please wait a moment and try again."
+            elif "insufficient_quota" in error_str or "quota" in error_str:
+                error_msg = "⚠️ Service temporarily unavailable — budget limit reached. Please contact the admin."
+            elif "invalid_api_key" in error_str or "authentication" in error_str:
+                error_msg = "⚠️ API configuration error. Please contact the admin."
+            else:
+                error_msg = "⚠️ I'm temporarily unable to process requests. Please try again in a few minutes."
+
+            payload = {"type": "token", "content": error_msg}
+            yield f"data: {json.dumps(payload)}\n\n"
+
+            done = {"type": "done", "total_tokens": 0}
+            yield f"data: {json.dumps(done)}\n\n"
+            return
 
         token_stats["total_queries"] += 1
         token_stats["total_tokens"] += total_tokens
