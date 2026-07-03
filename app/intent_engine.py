@@ -73,37 +73,40 @@ GREETING_RESPONSES = {
 def detect_intent_rule_based(user_query: str):
     """
     Try to detect intent using keyword matching.
-    Returns (intent, score, matched_greeting) or (None, 0, None) if unclear.
+    Returns (intent, score, matched_greeting, matched_keywords),
+    or (None, 0, None, []) if unclear.
     """
     query = user_query.lower().strip()
 
     # Exact greeting match
     if query in GREETING_RESPONSES:
-        return "general", 1, query
+        return "general", 1, query, [query]
 
     # Partial greeting match (short messages only)
     if len(query.split()) <= 4:
         for greeting in GREETING_RESPONSES:
             if greeting in query:
-                return "general", 1, greeting
+                return "general", 1, greeting, [greeting]
 
     scores = {}
+    matched_map = {}
     for intent, keywords in INTENT_KEYWORDS.items():
         matched = [kw for kw in keywords if kw in query]
         scores[intent] = len(matched)
+        matched_map[intent] = matched
 
     best_intent = max(scores, key=scores.get)
     best_score = scores[best_intent]
 
     if best_score == 0:
-        return None, 0, None
+        return None, 0, None, []
 
     # Check for ambiguity
     top_scores = [k for k, v in scores.items() if v == best_score]
     if len(top_scores) > 1:
-        return None, best_score, None
+        return None, best_score, None, []
 
-    return best_intent, best_score, None
+    return best_intent, best_score, None, matched_map[best_intent]
 
 
 # ── Step 2: OpenAI Fallback ──────────────────────────────
@@ -146,14 +149,15 @@ def get_intent(user_query: str) -> dict:
     Main function — tries rule-based first, falls back to OpenAI.
     Returns intent + method used + matched greeting key (if any).
     """
-    intent, score, matched_greeting = detect_intent_rule_based(user_query)
+    intent, score, matched_greeting, matched_keywords = detect_intent_rule_based(user_query)
 
     if intent:
         return {
             "intent": intent,
             "method": "rule-based",
             "score": score,
-            "greeting_key": matched_greeting
+            "greeting_key": matched_greeting,
+            "matched_keywords": matched_keywords
         }
 
     # Fallback to OpenAI
@@ -162,7 +166,8 @@ def get_intent(user_query: str) -> dict:
         "intent": intent,
         "method": "openai",
         "score": 0,
-        "greeting_key": None
+        "greeting_key": None,
+        "matched_keywords": []
     }
 
 

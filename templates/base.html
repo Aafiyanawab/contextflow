@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ContextFlow{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+<div class="topbar">
+    <button class="menu-btn" aria-label="Open navigation" onclick="document.body.classList.add('nav-open')">☰</button>
+    <span style="font-weight:700; font-size:14px">ContextFlow</span>
+</div>
+<div class="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+
+<div class="shell">
+    <aside class="sidebar" aria-label="Workspace navigation">
+        <a class="s-logo" href="{{ url_for('index') }}">
+            <span class="s-mark">
+                <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M2 6h3M7 6h3M5 6a1.4 1.4 0 1 0 0-.01M2 2.8h2.4M2 9.2h2.4"
+                          stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+                    <circle cx="9.6" cy="2.8" r="1.1" fill="#fff"/>
+                    <circle cx="9.6" cy="9.2" r="1.1" fill="#fff"/>
+                </svg>
+            </span>
+            ContextFlow
+        </a>
+
+        <div class="s-label">Workspaces</div>
+        {% for ws in sidebar_workspaces %}
+        <details class="ws" {% if active_ws and ws.id == active_ws.id %}data-active open{% endif %}>
+            <summary>
+                <span class="ws-ico">{{ ws.name[0]|upper }}</span>
+                <span class="ws-name">{{ ws.name }}</span>
+                <span class="ws-count">{{ ws.chats|length }}</span>
+            </summary>
+            <div class="ws-chats">
+                {% for chat in ws.chats %}
+                <a class="chat-link {% if active_chat and chat.id == active_chat.id %}on{% endif %}"
+                   href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}">
+                    <span class="dot"></span><span class="cl-t">{{ chat.title }}</span>
+                </a>
+                {% endfor %}
+                <a class="chat-link new" href="{{ url_for('workspace_view', ws_id=ws.id) }}#new-chat">＋ New chat</a>
+            </div>
+        </details>
+        {% endfor %}
+        <a class="s-connect" href="{{ url_for('connect') }}">
+            <span class="ws-ico">＋</span>Connect repository
+        </a>
+
+        <div class="s-foot">
+            <div class="s-usage">
+                {{ global_usage.queries }} queries · {{ "{:,}".format(global_usage.tokens) }} tokens ·
+                <b>{{ global_usage.free_pct }}% free</b>
+            </div>
+            <span class="s-settings" title="Coming soon">⚙ Settings</span>
+        </div>
+    </aside>
+
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

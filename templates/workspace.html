@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ ws.name }} — ContextFlow{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-head">
+        <div>
+            <h1>{{ ws.name }}</h1>
+            <div class="sub">
+                <span class="mono">{{ ws.repo_url.replace('https://', '') }}</span>
+                · scanned <span id="scannedAgo">{{ ws.last_scanned_at|timeago }}</span>
+            </div>
+        </div>
+        <div class="head-actions">
+            <button class="btn" id="rescanBtn">↻ Rescan</button>
+            <button class="btn danger" id="disconnectBtn">Disconnect</button>
+            <button class="btn primary" id="newChatBtn">＋ New chat</button>
+        </div>
+    </div>
+
+    <div class="error-card" id="pageError" role="alert"></div>
+
+    <div class="section">
+        <span class="lbl">Discovered context — shared by every chat in this workspace</span>
+        <div class="ctx-grid">
+            {% for key, label, value in cells %}
+            <div class="card ctx-cell {% if not value %}empty{% endif %}">
+                <div class="k">{{ label }}</div>
+                <b>{{ value|ctxval if value else "Not detected" }}</b>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="card chat-table">
+            <div class="thead">
+                <b>Chats</b>
+                <span>{{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }} · sorted by activity</span>
+            </div>
+            {% if ws.chats %}
+                {% for chat in ws.chats %}
+                <a class="chat-row" href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}">
+                    <span class="t"><span class="dot"></span><span>{{ chat.title }}</span></span>
+                    <span class="meta">{{ chat.messages|length }} message{{ "s" if chat.messages|length != 1 }}</span>
+                    <span class="meta">{{ chat.updated_at|timeago }}</span>
+                </a>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <div class="big">No chats yet</div>
+                    <p>Every chat here automatically uses the context above —<br>
+                       no need to describe your stack in every question.</p>
+                    <button class="btn primary" onclick="newChatDialog.showModal()">＋ Start the first chat</button>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<dialog class="dlg" id="newChatDialog">
+    <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}">
+        <h2>New chat in {{ ws.name }}</h2>
+        <p>This chat will automatically use the workspace's discovered context.</p>
+        <input class="field" name="title" placeholder="e.g. Deployment strategy"
+               maxlength="160" autocomplete="off" style="font-family:var(--font)">
+        <div class="dlg-actions">
+            <button type="button" class="btn" onclick="newChatDialog.close()">Cancel</button>
+            <button type="submit" class="btn primary">Create chat</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="dlg" id="disconnectDialog">
+    <form method="POST" action="{{ url_for('delete_workspace', ws_id=ws.id) }}">
+        <h2>Disconnect {{ ws.name }}?</h2>
+        <p>This permanently deletes the workspace, its discovered context, and
+           {% if ws.chats %}all {{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }} inside it{% else %}any future chats{% endif %}.
+           The GitHub repository itself is not touched.</p>
+        <div class="dlg-actions">
+            <button type="button" class="btn" onclick="disconnectDialog.close()">Cancel</button>
+            <button type="submit" class="btn destructive">Disconnect workspace</button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const rescanBtn = document.getElementById("rescanBtn");
+const pageError = document.getElementById("pageError");
+
+document.getElementById("newChatBtn").addEventListener("click", () => newChatDialog.showModal());
+document.getElementById("disconnectBtn").addEventListener("click", () => disconnectDialog.showModal());
+
+// Sidebar "+ New chat" links land here with #new-chat — open the dialog directly.
+if (location.hash === "#new-chat") {
+    newChatDialog.showModal();
+    history.replaceState(null, "", location.pathname);
+}
+
+rescanBtn.addEventListener("click", async () => {
+    pageError.classList.remove("active");
+    rescanBtn.disabled = true;
+    rescanBtn.innerHTML = '<span class="spinner"></span> Rescanning…';
+    try {
+        const res = await fetch("{{ url_for('rescan_workspace', ws_id=ws.id) }}", { method: "POST" });
+        const data = await res.json();
+        if (data.ok) { location.reload(); return; }
+        pageError.textContent = data.error || "Rescan failed.";
+    } catch {
+        pageError.textContent = "Could not reach the server.";
+    }
+    pageError.classList.add("active");
+    rescanBtn.disabled = false;
+    rescanBtn.innerHTML = "↻ Rescan";
+});
+</script>
+{% endblock %}

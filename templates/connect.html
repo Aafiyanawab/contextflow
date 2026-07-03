@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Connect repository — ContextFlow{% endblock %}
+
+{% block content %}
+<div class="connect-wrap">
+    <div class="card connect-card">
+        <h1>Connect a repository</h1>
+        <p class="sub">Each repository becomes a workspace. Discovery runs once —
+        every chat inside the workspace reuses its context.</p>
+
+        <form class="connect-form" id="connectForm">
+            <input type="url" class="field" id="repoUrl"
+                   placeholder="https://github.com/your-org/your-repo"
+                   autocomplete="off" required autofocus>
+            <button type="submit" class="btn primary" id="scanBtn" style="justify-content:center">
+                Scan repository
+            </button>
+        </form>
+
+        <div class="scan-steps" id="scanSteps" aria-live="polite"></div>
+        <div class="error-card" id="errorCard" role="alert"></div>
+        <div class="success-note" id="successNote">
+            <span class="tick">✓</span><span id="successText">Workspace created</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STEPS = [
+    { key: "tree",           label: "Repository tree" },
+    { key: "terraform",      label: "Terraform / IaC" },
+    { key: "docker",         label: "Docker" },
+    { key: "kubernetes",     label: "Kubernetes" },
+    { key: "github_actions", label: "CI/CD" },
+    { key: "language",       label: "Language" },
+    { key: "cloud",          label: "Cloud provider" },
+    { key: "framework",      label: "Framework" },
+];
+
+const form = document.getElementById("connectForm");
+const stepsBox = document.getElementById("scanSteps");
+const errorCard = document.getElementById("errorCard");
+const successNote = document.getElementById("successNote");
+const scanBtn = document.getElementById("scanBtn");
+
+function renderSteps() {
+    stepsBox.innerHTML = "";
+    for (const s of STEPS) {
+        const row = document.createElement("div");
+        row.className = "step";
+        row.id = "step-" + s.key;
+        row.innerHTML = '<span class="mark-cell"><span class="idle">·</span></span>'
+                      + '<span class="name"></span><span class="detail"></span>';
+        row.querySelector(".name").textContent = s.label;
+        stepsBox.appendChild(row);
+    }
+    setRunning(STEPS[0].key);
+}
+
+function setRunning(key) {
+    const row = document.getElementById("step-" + key);
+    if (!row || row.classList.contains("done")) return;
+    row.classList.add("running");
+    row.querySelector(".mark-cell").innerHTML = '<span class="spinner"></span>';
+}
+
+function setDone(key, detail) {
+    const row = document.getElementById("step-" + key);
+    if (!row) return;
+    row.classList.remove("running");
+    row.classList.add("done");
+    row.querySelector(".mark-cell").innerHTML = '<span class="tick">✓</span>';
+    const d = row.querySelector(".detail");
+    d.textContent = detail;
+    if (detail && detail !== "not found") d.classList.add("found");
+    const idx = STEPS.findIndex(s => s.key === key);
+    if (idx >= 0 && idx + 1 < STEPS.length) setRunning(STEPS[idx + 1].key);
+}
+
+function showError(message) {
+    errorCard.textContent = message;
+    errorCard.classList.add("active");
+    stepsBox.classList.remove("active");
+    scanBtn.disabled = false;
+    scanBtn.textContent = "Scan repository";
+}
+
+form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const repoUrl = document.getElementById("repoUrl").value.trim();
+    if (!repoUrl) return;
+
+    errorCard.classList.remove("active");
+    successNote.classList.remove("active");
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning…";
+    renderSteps();
+    stepsBox.classList.add("active");
+
+    let response;
+    try {
+        response = await fetch("/workspaces/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo_url: repoUrl }),
+        });
+    } catch (err) {
+        showError("Could not reach the server. Is it running?");
+        return;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.error) { showError(data.error); return; }
+        if (data.existing) {
+            document.getElementById("successText").textContent =
+                "This repository is already connected — opening its workspace.";
+            successNote.classList.add("active");
+            stepsBox.classList.remove("active");
+            setTimeout(() => { window.location = data.redirect; }, 900);
+        }
+        return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let event;
+            try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (event.type === "step") {
+                setDone(event.step, event.detail);
+            } else if (event.type === "error") {
+                showError(event.message);
+                return;
+            } else if (event.type === "done") {
+                for (const s of STEPS) {
+                    const row = document.getElementById("step-" + s.key);
+                    if (row && !row.classList.contains("done")) setDone(s.key, "");
+                }
+                document.getElementById("successText").textContent =
+                    "Workspace created — " + event.found + " technologies discovered.";
+                successNote.classList.add("active");
+                setTimeout(() => { window.location = event.redirect; }, 900);
+                return;
+            }
+        }
+    }
+});
+</script>
+{% endblock %}

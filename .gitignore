@@ -9,3 +9,5 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+instance/
+*.db

@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% block title %}{{ chat.title }} — {{ ws.name }} — ContextFlow{% endblock %}
+{% block bodyclass %}chat-mode{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+    <div class="conv">
+        <div class="conv-head">
+            <div class="crumb">
+                <a href="{{ url_for('workspace_view', ws_id=ws.id) }}" class="mono">{{ ws.name }}</a>
+                <span class="sep">/</span>
+                <b id="chatTitle">{{ chat.title }}</b>
+            </div>
+            <div class="head-actions">
+                <span class="pill"><span class="dot-g"></span>Context: {{ context_keys|length }} keys</span>
+                <button class="btn insp-toggle" id="inspToggleBtn" aria-label="Toggle Context Inspector">Inspector</button>
+            </div>
+        </div>
+
+        <div class="messages" id="messages" aria-live="polite"></div>
+
+        <form class="composer" id="composer">
+            <input type="text" class="composer-input" id="queryInput"
+                   placeholder="Ask about {{ ws.name }}…" autocomplete="off" autofocus>
+            <button type="submit" class="btn primary" id="sendBtn">Send</button>
+        </form>
+    </div>
+
+    <aside class="inspector verbose" id="inspector" aria-label="Context Inspector">
+        <div class="insp-head">
+            <b>Context Inspector</b>
+            <label class="switch">
+                <input type="checkbox" id="verboseToggle" checked>
+                <span class="track" aria-hidden="true"></span>Verbose
+            </label>
+        </div>
+        <div class="insp-scope" id="inspScope">Send a message to see how it's orchestrated</div>
+
+        <div class="panel">
+            <div class="lbl">Detected intent</div>
+            <div class="panel-row" id="intentRow">
+                <span class="tag idle" id="intentTag">—</span>
+                <span class="tag idle" id="methodTag">—</span>
+            </div>
+            <div class="panel-row vb" id="matchedRow" hidden>
+                <span class="kw-label">Matched:</span><span id="matchedKws"></span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="lbl">Injected context <span class="lbl-note">· from workspace</span></div>
+            <div id="injectedRows"><div class="cx-none" id="cxPlaceholder">Waiting for the first message…</div></div>
+            <div id="withheldRows" class="vb"></div>
+        </div>
+
+        <div class="panel">
+            <div class="lbl">Last exchange</div>
+            <div class="kpi-pair">
+                <div class="ikpi"><b id="tokIn">—</b><span>Prompt tokens</span></div>
+                <div class="ikpi"><b id="tokOut">—</b><span>Completion tokens</span></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="lbl">Workspace usage</div>
+            <div class="kpi-pair">
+                <div class="ikpi"><b id="uQueries">{{ payload.usage.queries }}</b><span>Queries</span></div>
+                <div class="ikpi"><b id="uTokens">{{ "{:,}".format(payload.usage.tokens) }}</b><span>Tokens</span></div>
+            </div>
+            <div class="panel-row spread">
+                <span class="kw-label">Free classifications</span>
+                <b class="pct" id="uFreePct">{{ payload.usage.free_pct }}%</b>
+            </div>
+            <div class="meter"><i id="uFreeMeter" style="width: {{ payload.usage.free_pct }}%"></i></div>
+            <div class="panel-row spread vb" title="Rule-based classifications skip the OpenAI classifier call (≈{{ 70 }} tokens each)">
+                <span class="kw-label">Est. classifier savings</span>
+                <b class="pct good" id="uSavings">≈{{ "{:,}".format(payload.usage.savings) }} tokens</b>
+            </div>
+        </div>
+    </aside>
+</div>
+
+<script id="chatData" type="application/json">{{ payload|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DATA = JSON.parse(document.getElementById("chatData").textContent);
+const messagesBox = document.getElementById("messages");
+const composer = document.getElementById("composer");
+const input = document.getElementById("queryInput");
+const sendBtn = document.getElementById("sendBtn");
+const inspector = document.getElementById("inspector");
+
+/* ── Formatting (escape first, then light markdown) ── */
+function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function fmt(raw) {
+    let t = esc(raw);
+    t = t.replace(/```\w*\n?([\s\S]*?)(?:```|$)/g, (m, code) =>
+        "<pre><code>" + code.replace(/\n$/, "") + "</code></pre>");
+    const parts = t.split(/(<pre><code>[\s\S]*?<\/code><\/pre>)/);
+    return parts.map(p => p.startsWith("<pre>") ? p :
+        p.replace(/`([^`\n]+)`/g, "<code>$1</code>")
+         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+         .replace(/\n/g, "<br>")).join("");
+}
+
+/* ── Rendering ── */
+function addUserMsg(text) {
+    const div = document.createElement("div");
+    div.className = "msg-u";
+    div.textContent = text;
+    messagesBox.appendChild(div);
+}
+function addAssistantMsg() {
+    const div = document.createElement("div");
+    div.className = "msg-a";
+    div.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+    messagesBox.appendChild(div);
+    return div;
+}
+let inspectedCard = null;
+function orchFooter(card, meta) {
+    const foot = document.createElement("div");
+    foot.className = "msg-foot";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "orch-link";
+    btn.textContent = "View orchestration";
+    btn.addEventListener("click", () => {
+        updateInspector(meta, "Selected exchange");
+        updateTokens(meta.tokens_in, meta.tokens_out);
+        if (inspectedCard) inspectedCard.classList.remove("inspected");
+        card.classList.add("inspected");
+        inspectedCard = card;
+        if (window.matchMedia("(max-width: 1100px)").matches) {
+            document.body.classList.add("insp-open");
+        }
+    });
+    foot.appendChild(btn);
+    return foot;
+}
+function scrollDown() { messagesBox.scrollTop = messagesBox.scrollHeight; }
+
+function renderEmptyState() {
+    const box = document.createElement("div");
+    box.className = "conv-empty";
+    box.innerHTML = '<div class="big">Ask about this repository</div>' +
+        '<p>ContextFlow injects the relevant workspace context automatically — watch the Inspector.</p>';
+    const chips = document.createElement("div");
+    chips.className = "sugg-row";
+    for (const s of DATA.suggestions) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "sugg";
+        chip.textContent = s;
+        chip.addEventListener("click", () => { input.value = s; input.focus(); });
+        chips.appendChild(chip);
+    }
+    box.appendChild(chips);
+    messagesBox.appendChild(box);
+}
+
+/* ── Inspector ── */
+function updateInspector(meta, scopeText) {
+    document.getElementById("inspScope").textContent = scopeText;
+    const intentTag = document.getElementById("intentTag");
+    const methodTag = document.getElementById("methodTag");
+    intentTag.textContent = meta.intent;
+    intentTag.className = "tag";
+    const free = meta.method === "rule-based";
+    methodTag.textContent = free ? "rule-based · $0" : "openai classifier";
+    methodTag.className = "tag" + (free ? " free" : "");
+
+    const matchedRow = document.getElementById("matchedRow");
+    const kws = document.getElementById("matchedKws");
+    kws.innerHTML = "";
+    if (meta.matched && meta.matched.length) {
+        matchedRow.hidden = false;
+        for (const k of meta.matched) {
+            const c = document.createElement("code");
+            c.className = "kwchip";
+            c.textContent = k;
+            kws.appendChild(c);
+        }
+    } else { matchedRow.hidden = true; }
+
+    const inj = document.getElementById("injectedRows");
+    const wh = document.getElementById("withheldRows");
+    inj.innerHTML = ""; wh.innerHTML = "";
+    if (!meta.injected.length && !meta.withheld.length) {
+        inj.innerHTML = '<div class="cx-none">No discovered context in this workspace</div>';
+    }
+    if (!meta.injected.length && meta.withheld.length) {
+        inj.innerHTML = '<div class="cx-none">Nothing injected for this intent</div>';
+    }
+    for (const e of meta.injected) {
+        const row = document.createElement("div");
+        row.className = "cx-row";
+        row.innerHTML = '<span class="tick">✓</span><b></b><span class="val"></span>';
+        row.querySelector("b").textContent = e.label;
+        row.querySelector(".val").textContent = e.value;
+        inj.appendChild(row);
+    }
+    for (const e of meta.withheld) {
+        const row = document.createElement("div");
+        row.className = "cx-row off";
+        row.innerHTML = '<span class="skip">–</span><b></b><span class="why"></span>';
+        row.querySelector("b").textContent = e.label;
+        row.querySelector(".why").textContent = e.reason || "";
+        wh.appendChild(row);
+    }
+}
+function updateTokens(tin, tout) {
+    document.getElementById("tokIn").textContent = tin;
+    document.getElementById("tokOut").textContent = tout;
+}
+function updateUsage(u) {
+    document.getElementById("uQueries").textContent = u.queries;
+    document.getElementById("uTokens").textContent = u.tokens.toLocaleString();
+    document.getElementById("uFreePct").textContent = u.free_pct + "%";
+    document.getElementById("uFreeMeter").style.width = u.free_pct + "%";
+    document.getElementById("uSavings").textContent = "≈" + u.savings.toLocaleString() + " tokens";
+}
+
+/* Verbose toggle (persisted) */
+const verbose = document.getElementById("verboseToggle");
+verbose.checked = localStorage.getItem("cfVerbose") !== "off";
+inspector.classList.toggle("verbose", verbose.checked);
+verbose.addEventListener("change", () => {
+    inspector.classList.toggle("verbose", verbose.checked);
+    localStorage.setItem("cfVerbose", verbose.checked ? "on" : "off");
+});
+
+/* Inspector overlay on narrow screens */
+document.getElementById("inspToggleBtn").addEventListener("click", () => {
+    document.body.classList.toggle("insp-open");
+});
+
+/* ── Load history ── */
+if (DATA.messages.length === 0) {
+    renderEmptyState();
+} else {
+    let lastMeta = null;
+    for (const m of DATA.messages) {
+        if (m.role === "user") { addUserMsg(m.content); continue; }
+        const div = addAssistantMsg();
+        div.innerHTML = fmt(m.content);
+        if (m.meta) { div.appendChild(orchFooter(div, m.meta)); lastMeta = m.meta; }
+    }
+    if (lastMeta) {
+        updateInspector(lastMeta, "Last exchange in this chat");
+        updateTokens(lastMeta.tokens_in, lastMeta.tokens_out);
+    }
+    scrollDown();
+}
+
+/* ── Send ── */
+composer.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const query = input.value.trim();
+    if (!query || sendBtn.disabled) return;
+
+    const empty = messagesBox.querySelector(".conv-empty");
+    if (empty) empty.remove();
+
+    addUserMsg(query);
+    input.value = "";
+    sendBtn.disabled = true;
+    const msgDiv = addAssistantMsg();
+    scrollDown();
+
+    let meta = null, fullText = "";
+    try {
+        const res = await fetch(DATA.postUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query }),
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                let ev;
+                try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+
+                if (ev.type === "meta") {
+                    meta = ev;
+                    updateInspector(ev, "This message · orchestrating…");
+                } else if (ev.type === "token") {
+                    if (fullText === "") msgDiv.innerHTML = "";
+                    fullText += ev.content;
+                    msgDiv.innerHTML = fmt(fullText);
+                    scrollDown();
+                } else if (ev.type === "error") {
+                    msgDiv.innerHTML = '<span class="msg-err"></span>';
+                    msgDiv.querySelector(".msg-err").textContent = ev.message;
+                } else if (ev.type === "done") {
+                    meta.tokens_in = ev.tokens_in;
+                    meta.tokens_out = ev.tokens_out;
+                    msgDiv.appendChild(orchFooter(msgDiv, meta));
+                    updateInspector(meta, "Last exchange in this chat");
+                    updateTokens(ev.tokens_in, ev.tokens_out);
+                    updateUsage(ev.usage);
+                    if (ev.title) {
+                        document.getElementById("chatTitle").textContent = ev.title;
+                        document.title = ev.title + " — ContextFlow";
+                        const link = document.querySelector(".chat-link.on .cl-t");
+                        if (link) link.textContent = ev.title;
+                    }
+                }
+            }
+        }
+    } catch {
+        msgDiv.innerHTML = '<span class="msg-err">Could not reach the server.</span>';
+    }
+    sendBtn.disabled = false;
+    input.focus();
+    scrollDown();
+});
+</script>
+{% endblock %}

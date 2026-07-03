@@ -104,11 +104,16 @@ def detect_framework(repo, file_paths):
     return None
 
 
-def discover_repo_context(repo_url: str) -> dict:
+def discover_repo_context(repo_url: str, progress=None) -> dict:
     """
     Main function — scans a GitHub repo and returns discovered context.
+    Optional progress(step, detail) callback reports scan stages for live UIs.
     """
-    print(f"\n🔍 Scanning repository: {repo_url}")
+    def report(step, detail=""):
+        if progress:
+            progress(step, detail)
+
+    print(f"\nScanning repository: {repo_url}")
 
     # Parse repo name from URL
     # e.g. https://github.com/owner/repo → owner/repo
@@ -119,7 +124,8 @@ def discover_repo_context(repo_url: str) -> dict:
 
     # Get all file paths
     file_paths = get_all_file_paths(repo)
-    print(f"📁 Found {len(file_paths)} files")
+    print(f"Found {len(file_paths)} files")
+    report("tree", f"{len(file_paths)} files")
 
     context = {
         "repo": repo_url,
@@ -157,6 +163,9 @@ def discover_repo_context(repo_url: str) -> dict:
             if matches >= 3:
                 detected = True
 
+        if tool in ("terraform", "docker", "kubernetes", "github_actions"):
+            report(tool, "detected" if detected else "not found")
+
         if detected:
             if tool == "terraform":
                 context["iac"] = "terraform"
@@ -170,11 +179,15 @@ def discover_repo_context(repo_url: str) -> dict:
                 if not context["language"]:
                     context["language"] = tool
 
+    report("language", context["language"] or "not found")
+
     # Detect cloud provider from Terraform files
     context["cloud"] = detect_cloud_provider(repo, file_paths)
+    report("cloud", context["cloud"] or "not found")
 
     # Detect framework from code files
     context["framework"] = detect_framework(repo, file_paths)
+    report("framework", context["framework"] or "not found")
 
     # Remove None values
     context = {k: v for k, v in context.items() if v is not None}
@@ -189,6 +202,6 @@ if __name__ == "__main__":
 
     context = discover_repo_context(test_repo)
 
-    print("\n✅ Discovered Context:")
+    print("\nDiscovered Context:")
     for key, value in context.items():
         print(f"  {key}: {value}")

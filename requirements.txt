@@ -1,5 +1,6 @@
 openai
 python-dotenv
 flask
+flask-sqlalchemy
 pygithub
 boto3

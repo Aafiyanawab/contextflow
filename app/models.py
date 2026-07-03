@@ -1,0 +1,70 @@
+import uuid
+from datetime import datetime, timezone
+
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
+
+
+def _uuid():
+    return uuid.uuid4().hex
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
+
+
+class Workspace(db.Model):
+    """A connected GitHub repository. Owns the discovered context —
+    discovery runs once at connect time and again only on explicit rescan."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    repo_url = db.Column(db.String(300), unique=True, nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    discovered_context = db.Column(db.JSON, nullable=False, default=dict)
+    last_scanned_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    chats = db.relationship(
+        "Chat",
+        backref="workspace",
+        cascade="all, delete-orphan",
+        order_by="Chat.updated_at.desc()",
+    )
+
+
+class Chat(db.Model):
+    """One line of inquiry inside a workspace. Contributes conversation
+    history to prompts; context always comes from the workspace."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    workspace_id = db.Column(db.String(32), db.ForeignKey("workspace.id"), nullable=False)
+    title = db.Column(db.String(160), nullable=False, default="New chat")
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    messages = db.relationship(
+        "Message",
+        backref="chat",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at.asc()",
+    )
+
+
+class Message(db.Model):
+    """A single turn. Assistant messages store a snapshot of the orchestration
+    (intent, injected/withheld context, tokens) so the Context Inspector stays
+    accurate even after a workspace rescan changes the live context."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    chat_id = db.Column(db.String(32), db.ForeignKey("chat.id"), nullable=False)
+    role = db.Column(db.String(12), nullable=False)  # user | assistant
+    content = db.Column(db.Text, nullable=False, default="")
+
+    # Orchestration snapshot — assistant messages only
+    intent = db.Column(db.String(24))
+    method = db.Column(db.String(16))  # rule-based | openai
+    matched_keywords = db.Column(db.JSON)
+    injected_context = db.Column(db.JSON)
+    withheld_context = db.Column(db.JSON)
+    tokens_in = db.Column(db.Integer, nullable=False, default=0)
+    tokens_out = db.Column(db.Integer, nullable=False, default=0)
+
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
