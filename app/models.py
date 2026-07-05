@@ -14,15 +14,47 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+class User(db.Model):
+    """An authenticated person. Owns workspaces; identities hold the
+    OAuth provider links (GitHub now, Google later)."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    name = db.Column(db.String(120))
+    email = db.Column(db.String(254), unique=True)
+    avatar_url = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    last_login_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    identities = db.relationship("OAuthIdentity", backref="user",
+                                 cascade="all, delete-orphan")
+    workspaces = db.relationship("Workspace", backref="owner",
+                                 cascade="all, delete-orphan")
+
+
+class OAuthIdentity(db.Model):
+    """One external login for a user. A second provider (e.g. Google)
+    is just another row linked to the same user — no schema change."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    user_id = db.Column(db.String(32), db.ForeignKey("user.id"), nullable=False)
+    provider = db.Column(db.String(20), nullable=False)      # "github" | "google"
+    provider_uid = db.Column(db.String(64), nullable=False)  # provider's user id
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (db.UniqueConstraint("provider", "provider_uid"),)
+
+
 class Workspace(db.Model):
     """A connected GitHub repository. Owns the discovered context —
     discovery runs once at connect time and again only on explicit rescan."""
     id = db.Column(db.String(32), primary_key=True, default=_uuid)
-    repo_url = db.Column(db.String(300), unique=True, nullable=False)
+    user_id = db.Column(db.String(32), db.ForeignKey("user.id"), nullable=False)
+    repo_url = db.Column(db.String(300), nullable=False)
     name = db.Column(db.String(120), nullable=False)
     discovered_context = db.Column(db.JSON, nullable=False, default=dict)
     last_scanned_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    # A repo may be connected by many users, but only once per user.
+    __table_args__ = (db.UniqueConstraint("user_id", "repo_url"),)
 
     chats = db.relationship(
         "Chat",

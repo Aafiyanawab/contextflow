@@ -2,10 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-ContextFlow: a Flask app that answers cloud/infra questions via OpenAI, injecting context
-auto-discovered from a connected GitHub repo. Request flow: `docs/ARCHITECTURE.md`; product
-background: `docs/PROJECT_CONTEXT.md`; planned work: `docs/ROADMAP.md`; design rationale:
-`docs/DECISIONS.md`.
+ContextFlow: a Flask AI engineering workspace. Users sign in with GitHub OAuth; each connected
+repository becomes a workspace whose auto-discovered context (cloud, IaC, CI/CD, language, …) is
+injected — filtered by detected intent — into every chat in that workspace. Full request flow:
+`docs/ARCHITECTURE.md`; product background: `docs/PROJECT_CONTEXT.md`; planned work:
+`docs/ROADMAP.md`; design rationale: `docs/DECISIONS.md`.
 
 ## Commands
 
@@ -13,19 +14,34 @@ background: `docs/PROJECT_CONTEXT.md`; planned work: `docs/ROADMAP.md`; design r
 pip install -r requirements.txt
 python app.py                    # dev server on http://localhost:5000
 
-# No test suite — each app/ module has an inline test block instead:
-python -m app.intent_engine      # intent classification (free, no API calls for keyword path)
-python -m app.context_builder    # prompt enrichment
-python -m app.ai_client          # end-to-end, makes a real OpenAI call
+# No test suite — pure modules have inline test blocks:
+python -m app.intent_engine      # intent classification (1 OpenAI call for the ambiguous sample)
+python -m app.context_builder    # context filtering, free
+python -m app.github_discovery   # scans a hardcoded repo URL via the GitHub API
 ```
 
-Requires `OPENAI_API_KEY` and `GITHUB_TOKEN` in `.env`.
+`.env` requires: `SECRET_KEY` (app refuses to boot without it), `OPENAI_API_KEY`,
+`GITHUB_TOKEN` (repo scanning), `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` (login).
 
 ## Things that will bite you
 
-- The OpenAI call is duplicated: streaming version inline in `app.py` `/chat`, non-streaming in
-  `app/ai_client.py`. Changing the system prompt, model, or token limits requires updating both.
-- `token_stats` and `conversation_history` in `app.py` are module-level globals — shared across all
-  users, reset on restart. Only `discovered_context` (Flask session) is per-user.
-- Every push to `main` deploys straight to EC2 via `.github/workflows/deploy.yml` — there is no
-  test or lint gate in the pipeline.
+- **No migrations yet.** Schema changes mean deleting `instance/contextflow.db` (dev-only data)
+  and signing in again. Adopt Flask-Migrate before there is data worth keeping.
+- **SSE generators outlive the request's DB session.** Never mutate ORM objects captured from
+  the request scope inside a streamed generator — changes silently don't persist. Re-fetch by
+  primary key inside the generator (see `post_message` in `app.py`).
+- **Auth has a 401-vs-redirect contract.** Frontend fetch/SSE calls must send
+  `X-Requested-With: fetch` and handle 401 by redirecting to `/login?error=session_expired`;
+  everything else (page loads, form posts) gets redirected server-side. Never let a user see
+  raw JSON.
+- **Every POST needs the CSRF token** (`check_csrf` in `app/auth.py`) — new forms need
+  `<input type="hidden" name="csrf_token" value="{{ csrf_token }}">`, new fetch calls the
+  `X-CSRF-Token` header (from `base.html`'s meta tag), or logged-in requests 403. New inline
+  `<script>` tags likewise need `nonce="{{ csp_nonce }}"` or the CSP silently blocks them.
+- **Cost surfaces are rate-limited per user** in `app/ratelimit.py` (in-memory, per-process —
+  limits multiply if you add workers). Messages 20/min; scan+rescan share 10 per 10 min.
+- **All access control flows through `get_owned_workspace()` / `get_owned_chat()`** in `app.py`.
+  Never query Workspace/Chat directly in a route — that chokepoint is where team workspaces and
+  RBAC will plug in.
+- **Every push to `main` deploys straight to EC2** via `.github/workflows/deploy.yml` — there is
+  no test or lint gate in the pipeline.

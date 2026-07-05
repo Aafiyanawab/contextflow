@@ -27,7 +27,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 const STEPS = [
     { key: "tree",           label: "Repository tree" },
     { key: "terraform",      label: "Terraform / IaC" },
@@ -39,6 +39,7 @@ const STEPS = [
     { key: "framework",      label: "Framework" },
 ];
 
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 const form = document.getElementById("connectForm");
 const stepsBox = document.getElementById("scanSteps");
 const errorCard = document.getElementById("errorCard");
@@ -103,11 +104,16 @@ form.addEventListener("submit", async (e) => {
     try {
         response = await fetch("/workspaces/scan", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch",
+                       "X-CSRF-Token": CSRF_TOKEN },
             body: JSON.stringify({ repo_url: repoUrl }),
         });
     } catch (err) {
         showError("Could not reach the server. Is it running?");
+        return;
+    }
+    if (response.status === 401) {
+        window.location = "/login?error=session_expired";
         return;
     }
 

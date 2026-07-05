@@ -54,28 +54,6 @@ def build_context(intent: str, discovered_context: dict) -> str:
     return "\n".join(lines)
 
 
-def build_enriched_prompt(user_query: str,
-                          intent: str,
-                          discovered_context: dict) -> str:
-    """
-    Combines context + user query into a final enriched prompt
-    ready to send to OpenAI.
-    """
-    context_block = build_context(intent, discovered_context)
-
-    if context_block:
-        enriched = f"""{context_block}
-
-User Question:
-{user_query}
-
-Please provide a specific answer based on the organizational context above."""
-    else:
-        enriched = user_query
-
-    return enriched
-
-
 # ── Test ─────────────────────────────────────────────────
 if __name__ == "__main__":
     # Simulate discovered context
@@ -87,17 +65,8 @@ if __name__ == "__main__":
         "language": "python"
     }
 
-    test_cases = [
-        ("Hi", "general"),
-        ("Create infrastructure for Redis", "infrastructure"),
-        ("How should I deploy this service?", "deployment"),
-        ("Fix the error in my Lambda function", "troubleshooting"),
-    ]
-
-    for query, intent in test_cases:
-        print(f"Query: {query}")
+    for intent in ["general", "infrastructure", "deployment", "troubleshooting"]:
         print(f"Intent: {intent.upper()}")
-        print(f"\nEnriched Prompt:")
         print("-" * 50)
-        print(build_enriched_prompt(query, intent, discovered))
+        print(build_context(intent, discovered) or "(no context injected)")
         print("=" * 50 + "\n")

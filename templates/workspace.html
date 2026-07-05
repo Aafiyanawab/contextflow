@@ -51,7 +51,7 @@
                     <div class="big">No chats yet</div>
                     <p>Every chat here automatically uses the context above —<br>
                        no need to describe your stack in every question.</p>
-                    <button class="btn primary" onclick="newChatDialog.showModal()">＋ Start the first chat</button>
+                    <button class="btn primary" id="startFirstChatBtn">＋ Start the first chat</button>
                 </div>
             {% endif %}
         </div>
@@ -60,12 +60,13 @@
 
 <dialog class="dlg" id="newChatDialog">
     <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <h2>New chat in {{ ws.name }}</h2>
         <p>This chat will automatically use the workspace's discovered context.</p>
         <input class="field" name="title" placeholder="e.g. Deployment strategy"
                maxlength="160" autocomplete="off" style="font-family:var(--font)">
         <div class="dlg-actions">
-            <button type="button" class="btn" onclick="newChatDialog.close()">Cancel</button>
+            <button type="button" class="btn" id="newChatCancel">Cancel</button>
             <button type="submit" class="btn primary">Create chat</button>
         </div>
     </form>
@@ -73,12 +74,13 @@
 
 <dialog class="dlg" id="disconnectDialog">
     <form method="POST" action="{{ url_for('delete_workspace', ws_id=ws.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <h2>Disconnect {{ ws.name }}?</h2>
         <p>This permanently deletes the workspace, its discovered context, and
            {% if ws.chats %}all {{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }} inside it{% else %}any future chats{% endif %}.
            The GitHub repository itself is not touched.</p>
         <div class="dlg-actions">
-            <button type="button" class="btn" onclick="disconnectDialog.close()">Cancel</button>
+            <button type="button" class="btn" id="disconnectCancel">Cancel</button>
             <button type="submit" class="btn destructive">Disconnect workspace</button>
         </div>
     </form>
@@ -86,12 +88,17 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 const rescanBtn = document.getElementById("rescanBtn");
 const pageError = document.getElementById("pageError");
 
 document.getElementById("newChatBtn").addEventListener("click", () => newChatDialog.showModal());
 document.getElementById("disconnectBtn").addEventListener("click", () => disconnectDialog.showModal());
+document.getElementById("newChatCancel").addEventListener("click", () => newChatDialog.close());
+document.getElementById("disconnectCancel").addEventListener("click", () => disconnectDialog.close());
+const startFirst = document.getElementById("startFirstChatBtn");
+if (startFirst) startFirst.addEventListener("click", () => newChatDialog.showModal());
 
 // Sidebar "+ New chat" links land here with #new-chat — open the dialog directly.
 if (location.hash === "#new-chat") {
@@ -104,7 +111,11 @@ rescanBtn.addEventListener("click", async () => {
     rescanBtn.disabled = true;
     rescanBtn.innerHTML = '<span class="spinner"></span> Rescanning…';
     try {
-        const res = await fetch("{{ url_for('rescan_workspace', ws_id=ws.id) }}", { method: "POST" });
+        const res = await fetch("{{ url_for('rescan_workspace', ws_id=ws.id) }}", {
+            method: "POST",
+            headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+        });
+        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
         const data = await res.json();
         if (data.ok) { location.reload(); return; }
         pageError.textContent = data.error || "Rescan failed.";

@@ -1,21 +1,6 @@
-import os
-import re
 from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-
-# ── Config ──────────────────────────────────────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = "gpt-4o-mini"
-
-VALID_INTENTS = [
-    "infrastructure",
-    "deployment",
-    "monitoring",
-    "security",
-    "troubleshooting"
-]
+from app.config import OPENAI_API_KEY, OPENAI_MODEL, VALID_INTENTS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -160,8 +145,13 @@ def get_intent(user_query: str) -> dict:
             "matched_keywords": matched_keywords
         }
 
-    # Fallback to OpenAI
-    intent = detect_intent_openai(user_query)
+    # Fallback to OpenAI. A classifier outage must not 500 the message
+    # route — default the intent and let the answer call (which has
+    # friendly error handling) surface any real API problem.
+    try:
+        intent = detect_intent_openai(user_query)
+    except Exception:
+        intent = "infrastructure"  # safe default
     return {
         "intent": intent,
         "method": "openai",

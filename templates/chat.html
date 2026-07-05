@@ -20,7 +20,7 @@
         <div class="messages" id="messages" aria-live="polite"></div>
 
         <form class="composer" id="composer">
-            <input type="text" class="composer-input" id="queryInput"
+            <input type="text" class="composer-input" id="queryInput" maxlength="4000"
                    placeholder="Ask about {{ ws.name }}…" autocomplete="off" autofocus>
             <button type="submit" class="btn primary" id="sendBtn">Send</button>
         </form>
@@ -80,12 +80,13 @@
     </aside>
 </div>
 
-<script id="chatData" type="application/json">{{ payload|tojson }}</script>
+<script id="chatData" type="application/json" nonce="{{ csp_nonce }}">{{ payload|tojson }}</script>
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 const DATA = JSON.parse(document.getElementById("chatData").textContent);
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 const messagesBox = document.getElementById("messages");
 const composer = document.getElementById("composer");
 const input = document.getElementById("queryInput");
@@ -217,12 +218,21 @@ function updateTokens(tin, tout) {
     document.getElementById("tokIn").textContent = tin;
     document.getElementById("tokOut").textContent = tout;
 }
-function updateUsage(u) {
+function updateUsage(u, userU) {
     document.getElementById("uQueries").textContent = u.queries;
     document.getElementById("uTokens").textContent = u.tokens.toLocaleString();
     document.getElementById("uFreePct").textContent = u.free_pct + "%";
     document.getElementById("uFreeMeter").style.width = u.free_pct + "%";
     document.getElementById("uSavings").textContent = "≈" + u.savings.toLocaleString() + " tokens";
+    // Same source of truth, user scope: keep the sidebar footer in sync.
+    if (userU) {
+        const q = document.getElementById("sQueries");
+        const t = document.getElementById("sTokens");
+        const f = document.getElementById("sFree");
+        if (q) q.textContent = userU.queries;
+        if (t) t.textContent = userU.tokens.toLocaleString();
+        if (f) f.textContent = userU.free_pct + "% free";
+    }
 }
 
 /* Verbose toggle (persisted) */
@@ -276,9 +286,23 @@ composer.addEventListener("submit", async (e) => {
     try {
         const res = await fetch(DATA.postUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch",
+                       "X-CSRF-Token": CSRF_TOKEN },
             body: JSON.stringify({ query }),
         });
+        if (res.status === 401) {
+            window.location = "/login?error=session_expired";
+            return;
+        }
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            msgDiv.innerHTML = '<span class="msg-err"></span>';
+            msgDiv.querySelector(".msg-err").textContent =
+                data.error || "Request failed. Refresh the page and try again.";
+            sendBtn.disabled = false;
+            input.focus();
+            return;
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -310,7 +334,7 @@ composer.addEventListener("submit", async (e) => {
                     msgDiv.appendChild(orchFooter(msgDiv, meta));
                     updateInspector(meta, "Last exchange in this chat");
                     updateTokens(ev.tokens_in, ev.tokens_out);
-                    updateUsage(ev.usage);
+                    updateUsage(ev.usage, ev.user_usage);
                     if (ev.title) {
                         document.getElementById("chatTitle").textContent = ev.title;
                         document.title = ev.title + " — ContextFlow";

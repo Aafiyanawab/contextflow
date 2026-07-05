@@ -5,33 +5,51 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import json
 import queue
 import re
+import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from flask import (Flask, render_template, request, jsonify, redirect,
-                   url_for, session, Response, stream_with_context, abort)
+from flask import (Flask, g, render_template, request, jsonify, redirect,
+                   url_for, Response, stream_with_context, abort)
 from dotenv import load_dotenv
 from sqlalchemy import func, case
 
 from app.models import db, Workspace, Chat, Message, utcnow
 from app.github_discovery import discover_repo_context
-from app.context_builder import (CONTEXT_LABELS, INTENT_CONTEXT_MAP,
-                                 build_context, build_enriched_prompt)
+from app.context_builder import CONTEXT_LABELS, INTENT_CONTEXT_MAP, build_context
 from app.intent_engine import get_intent, GREETING_RESPONSES
 from app.config import OPENAI_MODEL
+from app.auth import init_auth, login_required
+from app.ratelimit import rate_limit
 from openai import OpenAI
 
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "contextflow-dev-only")
+app.secret_key = os.getenv("SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("SECRET_KEY is not set. Add a long random value to .env "
+                       "(e.g. python -c \"import secrets; print(secrets.token_hex(32))\").")
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///contextflow.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_ENV") == "production"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+# Largest legitimate body is a chat message (4,000 chars of JSON);
+# 64 KB bounds memory per request with room to spare.
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 db.init_app(app)
 with app.app_context():
     db.create_all()
 
+init_auth(app)
+
+# Owner names cap at 39 chars and repo names at 100 on GitHub; 200 total
+# is generous. The explicit length check matters because SQLite doesn't
+# enforce the column's String(300).
 GITHUB_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+MAX_REPO_URL_CHARS = 200
 
 # Overview grid: every category we can discover, in display order.
 # Categories with no hit render dimmed — honesty about what wasn't found.
@@ -52,10 +70,69 @@ SYSTEM_PROMPT = ("You are ContextFlow, a senior cloud engineer assistant. "
                  "Provide specific, practical answers based on the "
                  "organizational context provided.")
 
+DEFAULT_GREETING_REPLY = ("Hello! I'm ContextFlow. How can I help with "
+                          "your infrastructure today?")
+
 # A rule-based classification avoids one OpenAI classifier call
 # (~60 prompt + ~10 completion tokens). Used for the savings estimate.
 CLASSIFIER_TOKENS_SAVED = 70
 HISTORY_LIMIT = 12  # prior messages included per prompt (6 exchanges)
+MAX_QUERY_CHARS = 4000  # bounds prompt-token spend per message
+
+SCAN_LIMIT_MESSAGE = ("Too many repository scans in a short time. "
+                      "Try again in a few minutes.")
+
+
+# ── Security headers ─────────────────────────────────────
+# A strict, nonce-based CSP: scripts run only if they carry the
+# per-request nonce, so an injected <script> can't execute even if
+# markup escaping is ever bypassed. Third-party origins are allowlisted
+# to exactly what the app loads (Google Fonts, GitHub avatars).
+
+@app.before_request
+def set_csp_nonce():
+    g.csp_nonce = secrets.token_urlsafe(16)
+
+
+@app.context_processor
+def inject_nonce():
+    return {"csp_nonce": getattr(g, "csp_nonce", "")}
+
+
+@app.after_request
+def security_headers(resp):
+    nonce = getattr(g, "csp_nonce", "")
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' https://avatars.githubusercontent.com; "
+        "connect-src 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'none'; "
+        "object-src 'none'"
+    )
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # HSTS only over TLS — sending it on today's plain-HTTP deploy would
+    # lock browsers out. Becomes active automatically once TLS lands.
+    if request.is_secure:
+        resp.headers["Strict-Transport-Security"] = \
+            "max-age=31536000; includeSubDomains"
+    return resp
+
+
+@app.errorhandler(413)
+def request_too_large(e):
+    # Keep the JSON-only-for-fetch contract even for bodies rejected
+    # before a view runs.
+    if request.headers.get("X-Requested-With") == "fetch":
+        return jsonify({"error": "Request too large."}), 413
+    return e
 
 
 @app.template_filter("ctxval")
@@ -81,48 +158,76 @@ def timeago(dt):
     return dt.strftime("%b %d, %Y")
 
 
-def usage_stats(workspace_id=None):
+def usage_stats(workspace_id=None, user_id=None):
     q = db.session.query(
         func.count(Message.id),
         func.coalesce(func.sum(Message.tokens_in + Message.tokens_out), 0),
         func.coalesce(func.sum(case((Message.method == "rule-based", 1), else_=0)), 0),
     ).filter(Message.role == "assistant")
+    if workspace_id or user_id:
+        q = q.join(Chat, Message.chat_id == Chat.id)
     if workspace_id:
-        q = q.join(Chat, Message.chat_id == Chat.id).filter(Chat.workspace_id == workspace_id)
+        q = q.filter(Chat.workspace_id == workspace_id)
+    if user_id:
+        q = q.join(Workspace, Chat.workspace_id == Workspace.id) \
+             .filter(Workspace.user_id == user_id)
     queries, tokens, free = q.one()
     free_pct = round(free * 100 / queries) if queries else 0
     return {"queries": queries, "tokens": int(tokens), "free_pct": free_pct,
             "savings": int(free) * CLASSIFIER_TOKENS_SAVED}
 
 
+# ── Ownership layer ──────────────────────────────────────
+# The single authorization chokepoint. Every workspace/chat access goes
+# through here; team workspaces and RBAC later mean extending these two
+# functions, not touching routes. 404 (not 403) so IDs aren't probeable.
+
+def get_owned_workspace(ws_id):
+    ws = db.session.get(Workspace, ws_id)
+    if not ws or ws.user_id != g.user.id:
+        abort(404)
+    return ws
+
+
+def get_owned_chat(chat_id):
+    chat = db.session.get(Chat, chat_id)
+    if not chat or chat.workspace.user_id != g.user.id:
+        abort(404)
+    return chat
+
+
 @app.context_processor
 def sidebar_context():
-    workspaces = Workspace.query.order_by(Workspace.created_at.asc()).all()
-    return {"sidebar_workspaces": workspaces, "global_usage": usage_stats()}
+    if not getattr(g, "user", None):
+        return {"sidebar_workspaces": [], "global_usage": usage_stats(user_id="none")}
+    workspaces = (Workspace.query.filter_by(user_id=g.user.id)
+                  .order_by(Workspace.created_at.asc()).all())
+    return {"sidebar_workspaces": workspaces,
+            "global_usage": usage_stats(user_id=g.user.id)}
 
 
 # ── Navigation ───────────────────────────────────────────
 
 @app.route("/")
+@login_required
 def index():
-    last_chat = Chat.query.order_by(Chat.updated_at.desc()).first()
+    last_chat = (Chat.query.join(Workspace)
+                 .filter(Workspace.user_id == g.user.id)
+                 .order_by(Chat.updated_at.desc()).first())
     if last_chat:
         return redirect(url_for("chat_view", ws_id=last_chat.workspace_id,
                                  chat_id=last_chat.id))
-    ws = Workspace.query.order_by(Workspace.created_at.desc()).first()
+    ws = (Workspace.query.filter_by(user_id=g.user.id)
+          .order_by(Workspace.created_at.desc()).first())
     if ws:
         return redirect(url_for("workspace_view", ws_id=ws.id))
-    return redirect(url_for("connect"))
-
-
-@app.route("/setup")
-def setup():
     return redirect(url_for("connect"))
 
 
 # ── Connect repository ───────────────────────────────────
 
 @app.route("/connect")
+@login_required
 def connect():
     return render_template("connect.html")
 
@@ -139,17 +244,21 @@ def _friendly_scan_error(raw: str) -> str:
 
 
 @app.route("/workspaces/scan", methods=["POST"])
+@login_required
+@rate_limit("scan", limit=10, per_seconds=600, message=SCAN_LIMIT_MESSAGE)
 def scan_workspace():
     data = request.get_json(silent=True) or {}
     repo_url = (data.get("repo_url") or "").strip().rstrip("/")
-    if not GITHUB_URL_RE.match(repo_url):
+    if len(repo_url) > MAX_REPO_URL_CHARS or not GITHUB_URL_RE.match(repo_url):
         return jsonify({"error": "Enter a full GitHub repository URL, "
                                  "like https://github.com/org/repo"}), 400
 
-    existing = Workspace.query.filter_by(repo_url=repo_url).first()
+    existing = Workspace.query.filter_by(user_id=g.user.id,
+                                         repo_url=repo_url).first()
     if existing:
         return jsonify({"redirect": url_for("workspace_view", ws_id=existing.id),
                         "existing": True})
+    user_pk = g.user.id  # capture before the streamed generator runs
 
     events = queue.Queue()
     outcome = {}
@@ -177,7 +286,8 @@ def scan_workspace():
             yield f"data: {json.dumps(payload)}\n\n"
             return
 
-        ws = Workspace(repo_url=repo_url,
+        ws = Workspace(user_id=user_pk,
+                       repo_url=repo_url,
                        name=repo_url.split("/")[-1],
                        discovered_context=outcome["context"],
                        last_scanned_at=utcnow())
@@ -197,10 +307,9 @@ def scan_workspace():
 # ── Workspace ────────────────────────────────────────────
 
 @app.route("/w/<ws_id>")
+@login_required
 def workspace_view(ws_id):
-    ws = db.session.get(Workspace, ws_id)
-    if not ws:
-        abort(404)
+    ws = get_owned_workspace(ws_id)
     cells = [(key, OVERVIEW_LABELS.get(key, key), ws.discovered_context.get(key))
              for key in OVERVIEW_KEYS]
     return render_template("workspace.html", ws=ws, cells=cells,
@@ -208,10 +317,10 @@ def workspace_view(ws_id):
 
 
 @app.route("/w/<ws_id>/rescan", methods=["POST"])
+@login_required
+@rate_limit("scan", limit=10, per_seconds=600, message=SCAN_LIMIT_MESSAGE)
 def rescan_workspace(ws_id):
-    ws = db.session.get(Workspace, ws_id)
-    if not ws:
-        abort(404)
+    ws = get_owned_workspace(ws_id)
     try:
         context = discover_repo_context(ws.repo_url)
     except Exception as e:
@@ -223,20 +332,18 @@ def rescan_workspace(ws_id):
 
 
 @app.route("/w/<ws_id>/delete", methods=["POST"])
+@login_required
 def delete_workspace(ws_id):
-    ws = db.session.get(Workspace, ws_id)
-    if not ws:
-        abort(404)
+    ws = get_owned_workspace(ws_id)
     db.session.delete(ws)  # cascades to chats and messages
     db.session.commit()
     return redirect(url_for("index"))
 
 
 @app.route("/w/<ws_id>/chats", methods=["POST"])
+@login_required
 def create_chat(ws_id):
-    ws = db.session.get(Workspace, ws_id)
-    if not ws:
-        abort(404)
+    ws = get_owned_workspace(ws_id)
     title = (request.form.get("title") or "").strip()[:160] or "New chat"
     new_chat = Chat(workspace_id=ws.id, title=title)
     db.session.add(new_chat)
@@ -296,10 +403,11 @@ def serialize_message(m):
 
 
 @app.route("/w/<ws_id>/c/<chat_id>")
+@login_required
 def chat_view(ws_id, chat_id):
-    ws = db.session.get(Workspace, ws_id)
+    ws = get_owned_workspace(ws_id)
     active_chat = db.session.get(Chat, chat_id)
-    if not ws or not active_chat or active_chat.workspace_id != ws.id:
+    if not active_chat or active_chat.workspace_id != ws.id:
         abort(404)
     payload = {
         "messages": [serialize_message(m) for m in active_chat.messages],
@@ -329,15 +437,18 @@ def _friendly_llm_error(raw: str) -> str:
 
 
 @app.route("/c/<chat_id>/messages", methods=["POST"])
+@login_required
+@rate_limit("messages", limit=20, per_seconds=60)
 def post_message(chat_id):
-    active_chat = db.session.get(Chat, chat_id)
-    if not active_chat:
-        abort(404)
+    active_chat = get_owned_chat(chat_id)
     ws = active_chat.workspace
     data = request.get_json(silent=True) or {}
     query = (data.get("query") or "").strip()
     if not query:
         return jsonify({"error": "Empty message"}), 400
+    if len(query) > MAX_QUERY_CHARS:
+        return jsonify({"error": f"Message too long — keep it under "
+                                 f"{MAX_QUERY_CHARS:,} characters."}), 400
 
     discovered = ws.discovered_context or {}
     intent_result = get_intent(query)
@@ -349,7 +460,7 @@ def post_message(chat_id):
     needs_title = is_first and active_chat.title == "New chat"
     history = [{"role": m.role, "content": m.content}
                for m in active_chat.messages[-HISTORY_LIMIT:]]
-    chat_pk, ws_pk = active_chat.id, ws.id
+    chat_pk, ws_pk, owner_pk = active_chat.id, ws.id, ws.user_id
 
     def generate():
         # The generator may run under a different session than the request
@@ -386,7 +497,9 @@ def post_message(chat_id):
                 yield _sse({"type": "token", "content": word + " "})
             persist_assistant(reply, 0, 0)
             yield _sse({"type": "done", "tokens_in": 0, "tokens_out": 0,
-                        "title": chat_row.title, "usage": usage_stats(ws_pk)})
+                        "title": chat_row.title,
+                        "usage": usage_stats(ws_pk),
+                        "user_usage": usage_stats(user_id=owner_pk)})
             return
 
         context_block = build_context(intent, discovered)
@@ -420,7 +533,9 @@ def post_message(chat_id):
 
         persist_assistant(answer, tokens_in, tokens_out)
         yield _sse({"type": "done", "tokens_in": tokens_in, "tokens_out": tokens_out,
-                    "title": chat_row.title, "usage": usage_stats(ws_pk)})
+                    "title": chat_row.title,
+                    "usage": usage_stats(ws_pk),
+                    "user_usage": usage_stats(user_id=owner_pk)})
 
     return Response(stream_with_context(generate()),
                     mimetype="text/event-stream",
@@ -428,159 +543,10 @@ def post_message(chat_id):
                              "X-Accel-Buffering": "no"})
 
 
-# ── Legacy (single-repo chat; removed in increment 3) ────
-
-conversation_history = []
-token_stats = {
-    "total_queries": 0,
-    "total_tokens": 0,
-    "rule_based_count": 0,
-    "openai_classified_count": 0
-}
-
-DEFAULT_GREETING_REPLY = "Hello! I'm ContextFlow. How can I help with your infrastructure today?"
-
-
-@app.route("/legacy")
-def legacy_index():
-    discovered = session.get("discovered_context", {})
-    return render_template("index.html",
-                           discovered=discovered,
-                           stats=token_stats,
-                           history=conversation_history)
-
-
-@app.route("/disconnect", methods=["POST"])
-def disconnect():
-    session.pop("discovered_context", None)
-    return jsonify({"status": "disconnected"})
-
-
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json()
-    user_query = data.get("query", "")
-
-    if not user_query:
-        return jsonify({"error": "No query provided"}), 400
-
-    discovered = session.get("discovered_context", {})
-    intent_result = get_intent(user_query)
-
-    # ── Fast path: greetings get instant, free, hardcoded replies ──
-    if intent_result["intent"] == "general" and intent_result["method"] == "rule-based":
-        def generate_instant():
-            meta = {"type": "meta", "intent": "general", "method": "rule-based"}
-            yield f"data: {json.dumps(meta)}\n\n"
-
-            greeting_key = intent_result.get("greeting_key")
-            reply = GREETING_RESPONSES.get(greeting_key, DEFAULT_GREETING_REPLY)
-
-            for word in reply.split(" "):
-                payload = {"type": "token", "content": word + " "}
-                yield f"data: {json.dumps(payload)}\n\n"
-
-            token_stats["total_queries"] += 1
-            token_stats["rule_based_count"] += 1
-            done = {"type": "done", "total_tokens": 0}
-            yield f"data: {json.dumps(done)}\n\n"
-
-        return Response(
-            stream_with_context(generate_instant()),
-            mimetype="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-        )
-
-    # ── Normal path: real questions go to OpenAI ──
-    enriched_prompt = build_enriched_prompt(
-        user_query,
-        intent_result["intent"],
-        discovered
-    )
-
-    def generate():
-        meta = {
-            "type": "meta",
-            "intent": intent_result["intent"],
-            "method": intent_result["method"]
-        }
-        yield f"data: {json.dumps(meta)}\n\n"
-
-        total_tokens = 0
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        try:
-            with client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a senior cloud engineer assistant. "
-                                   "Provide specific, practical answers based on "
-                                   "the organizational context provided."
-                    },
-                    {
-                        "role": "user",
-                        "content": enriched_prompt
-                    }
-                ],
-                max_tokens=1000,
-                temperature=0.3,
-                stream=True
-            ) as stream:
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        token = chunk.choices[0].delta.content
-                        total_tokens += 1
-                        payload = {"type": "token", "content": token}
-                        yield f"data: {json.dumps(payload)}\n\n"
-
-        except Exception as e:
-            error_str = str(e).lower()
-
-            if "rate_limit" in error_str:
-                error_msg = "⚠️ Too many requests right now. Please wait a moment and try again."
-            elif "insufficient_quota" in error_str or "quota" in error_str:
-                error_msg = "⚠️ Service temporarily unavailable — budget limit reached. Please contact the admin."
-            elif "invalid_api_key" in error_str or "authentication" in error_str:
-                error_msg = "⚠️ API configuration error. Please contact the admin."
-            else:
-                error_msg = "⚠️ I'm temporarily unable to process requests. Please try again in a few minutes."
-
-            payload = {"type": "token", "content": error_msg}
-            yield f"data: {json.dumps(payload)}\n\n"
-
-            done = {"type": "done", "total_tokens": 0}
-            yield f"data: {json.dumps(done)}\n\n"
-            return
-
-        token_stats["total_queries"] += 1
-        token_stats["total_tokens"] += total_tokens
-        if intent_result["method"] == "rule-based":
-            token_stats["rule_based_count"] += 1
-        else:
-            token_stats["openai_classified_count"] += 1
-
-        done = {"type": "done", "total_tokens": total_tokens}
-        yield f"data: {json.dumps(done)}\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
-    )
-
-
-@app.route("/stats")
-def stats():
-    return jsonify({
-        "stats": token_stats,
-        "discovered_context": session.get("discovered_context", {})
-    })
-
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Debug must never default on — the Werkzeug debugger is an RCE console.
+    # Opt in locally with FLASK_DEBUG=1; production leaves it unset.
+    debug = os.getenv("FLASK_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+    app.run(host=os.getenv("HOST", "0.0.0.0"),
+            port=int(os.getenv("PORT", "5000")),
+            debug=debug)
