@@ -1,22 +1,52 @@
 {% extends "base.html" %}
-{% block title %}Connect repository — ContextFlow{% endblock %}
+{% block title %}Add knowledge — ContextFlow{% endblock %}
 
 {% block content %}
 <div class="connect-wrap">
+    <div class="connect-intro">
+        <h1>Create a workspace</h1>
+        <p class="sub">Choose a knowledge source. A workspace remembers everything
+        you add to it — every chat inside reuses that knowledge.</p>
+    </div>
+
+    <div class="src-choice">
+        <div class="card connect-card">
+            <h2>GitHub repository</h2>
+            <p class="sub">Discovery scans the repo once and maps your stack —
+            cloud, IaC, CI/CD, language.</p>
+            <form class="connect-form" id="connectForm">
+                <input type="url" class="field" id="repoUrl"
+                       placeholder="https://github.com/your-org/your-repo"
+                       autocomplete="off" required>
+                <button type="submit" class="btn primary" id="scanBtn" style="justify-content:center">
+                    Scan repository
+                </button>
+            </form>
+        </div>
+
+        <div class="card connect-card">
+            <h2>Upload documents</h2>
+            <p class="sub">PDF, DOCX, TXT, or Markdown — up to 50 files,
+            10&nbsp;MB each. Folders supported.</p>
+            <form class="connect-form" id="uploadForm">
+                <input type="text" class="field" id="wsName" maxlength="120"
+                       placeholder="Workspace name (e.g. Study notes)" autocomplete="off">
+                <input type="file" id="fileInput" multiple
+                       accept=".pdf,.docx,.txt,.md,.markdown" hidden>
+                <input type="file" id="folderInput" webkitdirectory hidden>
+                <div class="pick-row">
+                    <button type="button" class="btn" id="pickFilesBtn">Choose files</button>
+                    <button type="button" class="btn" id="pickFolderBtn">Choose a folder</button>
+                    <span class="pick-note" id="pickNote">No files selected</span>
+                </div>
+                <button type="submit" class="btn primary" id="uploadBtn" style="justify-content:center">
+                    Create workspace
+                </button>
+            </form>
+        </div>
+    </div>
+
     <div class="card connect-card">
-        <h1>Connect a repository</h1>
-        <p class="sub">Each repository becomes a workspace. Discovery runs once —
-        every chat inside the workspace reuses its context.</p>
-
-        <form class="connect-form" id="connectForm">
-            <input type="url" class="field" id="repoUrl"
-                   placeholder="https://github.com/your-org/your-repo"
-                   autocomplete="off" required autofocus>
-            <button type="submit" class="btn primary" id="scanBtn" style="justify-content:center">
-                Scan repository
-            </button>
-        </form>
-
         <div class="scan-steps" id="scanSteps" aria-live="polite"></div>
         <div class="error-card" id="errorCard" role="alert"></div>
         <div class="success-note" id="successNote">
@@ -86,29 +116,40 @@ function showError(message) {
     stepsBox.classList.remove("active");
     scanBtn.disabled = false;
     scanBtn.textContent = "Scan repository";
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = "Create workspace";
 }
 
-form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const repoUrl = document.getElementById("repoUrl").value.trim();
-    if (!repoUrl) return;
+/* Shared SSE reader for scan and upload streams. */
+async function readStream(response, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let event;
+            try { event = JSON.parse(line.slice(6)); } catch { continue; }
+            if (onEvent(event) === false) return;
+        }
+    }
+}
 
-    errorCard.classList.remove("active");
-    successNote.classList.remove("active");
-    scanBtn.disabled = true;
-    scanBtn.textContent = "Scanning…";
-    renderSteps();
-    stepsBox.classList.add("active");
-
+async function postAndHandle(url, body, extraHeaders, onEvent) {
     let response;
     try {
-        response = await fetch("/workspaces/scan", {
+        response = await fetch(url, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch",
-                       "X-CSRF-Token": CSRF_TOKEN },
-            body: JSON.stringify({ repo_url: repoUrl }),
+            headers: Object.assign({ "X-Requested-With": "fetch",
+                                     "X-CSRF-Token": CSRF_TOKEN }, extraHeaders),
+            body,
         });
-    } catch (err) {
+    } catch {
         showError("Could not reach the server. Is it running?");
         return;
     }
@@ -116,7 +157,6 @@ form.addEventListener("submit", async (e) => {
         window.location = "/login?error=session_expired";
         return;
     }
-
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
         const data = await response.json();
@@ -130,29 +170,27 @@ form.addEventListener("submit", async (e) => {
         }
         return;
     }
+    await readStream(response, onEvent);
+}
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const repoUrl = document.getElementById("repoUrl").value.trim();
+    if (!repoUrl) return;
+    errorCard.classList.remove("active");
+    successNote.classList.remove("active");
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning…";
+    renderSteps();
+    stepsBox.classList.add("active");
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
-        for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            let event;
-            try { event = JSON.parse(line.slice(6)); } catch { continue; }
-
-            if (event.type === "step") {
-                setDone(event.step, event.detail);
-            } else if (event.type === "error") {
-                showError(event.message);
-                return;
-            } else if (event.type === "done") {
+    await postAndHandle("/workspaces/scan",
+        JSON.stringify({ repo_url: repoUrl }),
+        { "Content-Type": "application/json" },
+        (event) => {
+            if (event.type === "step") setDone(event.step, event.detail);
+            else if (event.type === "error") { showError(event.message); return false; }
+            else if (event.type === "done") {
                 for (const s of STEPS) {
                     const row = document.getElementById("step-" + s.key);
                     if (row && !row.classList.contains("done")) setDone(s.key, "");
@@ -161,10 +199,73 @@ form.addEventListener("submit", async (e) => {
                     "Workspace created — " + event.found + " technologies discovered.";
                 successNote.classList.add("active");
                 setTimeout(() => { window.location = event.redirect; }, 900);
-                return;
+                return false;
             }
+        });
+});
+
+/* ── Upload card ── */
+const uploadForm = document.getElementById("uploadForm");
+const uploadBtn = document.getElementById("uploadBtn");
+const fileInput = document.getElementById("fileInput");
+const folderInput = document.getElementById("folderInput");
+const pickNote = document.getElementById("pickNote");
+let picked = [];
+
+function notePicked(list) {
+    picked = Array.from(list);
+    pickNote.textContent = picked.length
+        ? picked.length + " file" + (picked.length !== 1 ? "s" : "") + " selected"
+        : "No files selected";
+}
+document.getElementById("pickFilesBtn").addEventListener("click", () => fileInput.click());
+document.getElementById("pickFolderBtn").addEventListener("click", () => folderInput.click());
+fileInput.addEventListener("change", () => notePicked(fileInput.files));
+folderInput.addEventListener("change", () => notePicked(folderInput.files));
+
+function addFileRow(name, status, detail) {
+    const row = document.createElement("div");
+    row.className = "step done";
+    const mark = status === "extracted" ? '<span class="tick">✓</span>'
+               : status === "skipped" ? '<span class="idle">→</span>'
+               : '<span class="cross">✕</span>';
+    row.innerHTML = '<span class="mark-cell">' + mark + '</span>'
+                  + '<span class="name"></span><span class="detail"></span>';
+    row.querySelector(".name").textContent = name;
+    const d = row.querySelector(".detail");
+    d.textContent = detail || "";
+    if (status === "extracted") d.classList.add("found");
+    stepsBox.appendChild(row);
+}
+
+uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!picked.length) { showError("Choose at least one file first."); return; }
+    errorCard.classList.remove("active");
+    successNote.classList.remove("active");
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "Uploading…";
+    stepsBox.innerHTML = "";
+    stepsBox.classList.add("active");
+
+    const fd = new FormData();
+    fd.append("name", document.getElementById("wsName").value.trim());
+    for (const f of picked) fd.append("files", f, f.webkitRelativePath || f.name);
+
+    await postAndHandle("/workspaces/upload", fd, {}, (event) => {
+        if (event.type === "file") addFileRow(event.name, event.status, event.detail);
+        else if (event.type === "error") { showError(event.message); return false; }
+        else if (event.type === "summary") {
+            document.getElementById("successText").textContent =
+                "Workspace created — " + event.added + " document"
+                + (event.added !== 1 ? "s" : "") + " added"
+                + (event.failed ? ", " + event.failed + " failed" : "") + ".";
+        } else if (event.type === "done") {
+            successNote.classList.add("active");
+            setTimeout(() => { window.location = event.redirect; }, 1200);
+            return false;
         }
-    }
+    });
 });
 </script>
 {% endblock %}

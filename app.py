@@ -16,13 +16,19 @@ from sqlalchemy import func, case
 
 from flask_migrate import Migrate
 
-from app.models import db, Workspace, KnowledgeSource, Chat, Message, utcnow
+from app.models import (db, Workspace, KnowledgeSource, Chunk, Chat,
+                        Message, utcnow)
 from app.github_discovery import discover_repo_context
 from app.context_builder import CONTEXT_LABELS, INTENT_CONTEXT_MAP, build_context
 from app.intent_engine import get_intent, GREETING_RESPONSES
 from app.config import OPENAI_MODEL
 from app.auth import init_auth, login_required
+from app.config import RETRIEVAL_TOKEN_BUDGET
+from app.embeddings import embed_query, search as vector_search
+from app.ingest import ingest_upload_batch
+from app.ingest.extract import ALLOWED_EXTENSIONS
 from app.ratelimit import rate_limit
+from app.storage import LocalStorage
 from openai import OpenAI
 
 load_dotenv()
@@ -41,15 +47,29 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_ENV") == "production"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
-# Largest legitimate body is a chat message (4,000 chars of JSON);
-# 64 KB bounds memory per request with room to spare.
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+# Uploads need real headroom (multipart only); every other body is
+# still capped at 64 KB by cap_non_upload_bodies below.
+app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
+NON_UPLOAD_BODY_LIMIT = 64 * 1024
 db.init_app(app)
 # Schema is managed by Alembic migrations now (flask db upgrade), not
 # create_all. render_as_batch is required for SQLite column drops.
 migrate = Migrate(app, db, render_as_batch=True)
 
 init_auth(app)
+
+# The AWS seam: production swaps this for an S3-backed class with the
+# same interface (see app/storage.py).
+storage = LocalStorage(os.path.join(app.instance_path, "uploads"))
+
+
+@app.before_request
+def cap_non_upload_bodies():
+    # Multipart uploads get the large limit; JSON/form bodies keep the
+    # tight one so the abuse cap from the security phase still holds.
+    if (request.content_length and request.content_length > NON_UPLOAD_BODY_LIMIT
+            and not (request.mimetype or "").startswith("multipart/")):
+        abort(413)
 
 # Owner names cap at 39 chars and repo names at 100 on GitHub; 200 total
 # is generous. The explicit length check matters because SQLite doesn't
@@ -87,6 +107,10 @@ MAX_QUERY_CHARS = 4000  # bounds prompt-token spend per message
 
 SCAN_LIMIT_MESSAGE = ("Too many repository scans in a short time. "
                       "Try again in a few minutes.")
+UPLOAD_LIMIT_MESSAGE = ("Too many uploads in a short time. "
+                        "Try again in a few minutes.")
+MAX_UPLOAD_FILES = 50
+MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
 
 
 # ── Security headers ─────────────────────────────────────
@@ -314,6 +338,124 @@ def scan_workspace():
                              "X-Accel-Buffering": "no"})
 
 
+# ── Upload knowledge sources ─────────────────────────────
+
+def _read_upload_files():
+    """Validate and read the request's files while they're still bound
+    to the request. Whole-batch rejection on any invalid file — partial
+    acceptance surprises users. Returns (files, error)."""
+    uploads = [f for f in request.files.getlist("files") if f and f.filename]
+    if not uploads:
+        return None, "No files selected."
+    if len(uploads) > MAX_UPLOAD_FILES:
+        return None, (f"Too many files — upload at most "
+                      f"{MAX_UPLOAD_FILES} at a time.")
+    files = []
+    for f in uploads:
+        # Folder uploads send relative paths; keep only the leaf name.
+        # Storage keys are id-based, so this is display/extension only.
+        name = os.path.basename(f.filename.replace("\\", "/"))
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            return None, (f"\"{name}\" isn't a supported type. Use PDF, "
+                          f"DOCX, TXT, or Markdown.")
+        data = f.read()
+        if len(data) > MAX_UPLOAD_FILE_BYTES:
+            return None, f"\"{name}\" is larger than 10 MB."
+        files.append((name, data))
+    return files, None
+
+
+def _upload_response(ws_id, files):
+    """SSE stream of ingestion progress, ending with a redirect —
+    the same shape the scan stream has."""
+    def generate():
+        for event in ingest_upload_batch(ws_id, files, storage):
+            yield _sse(event)
+        yield _sse({"type": "done",
+                    "redirect": url_for("workspace_view", ws_id=ws_id)})
+    return Response(stream_with_context(generate()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache",
+                             "X-Accel-Buffering": "no"})
+
+
+@app.route("/workspaces/upload", methods=["POST"])
+@login_required
+@rate_limit("upload", limit=10, per_seconds=600, message=UPLOAD_LIMIT_MESSAGE)
+def upload_workspace():
+    files, err = _read_upload_files()
+    if err:
+        return jsonify({"error": err}), 400
+    name = (request.form.get("name") or "").strip()[:120] or "My documents"
+    ws = Workspace(user_id=g.user.id, name=name)
+    db.session.add(ws)
+    db.session.commit()  # committed before streaming; generator re-queries
+    return _upload_response(ws.id, files)
+
+
+@app.route("/w/<ws_id>/sources/upload", methods=["POST"])
+@login_required
+@rate_limit("upload", limit=10, per_seconds=600, message=UPLOAD_LIMIT_MESSAGE)
+def upload_to_workspace(ws_id):
+    ws = get_owned_workspace(ws_id)
+    files, err = _read_upload_files()
+    if err:
+        return jsonify({"error": err}), 400
+    return _upload_response(ws.id, files)
+
+
+@app.route("/w/<ws_id>/search", methods=["POST"])
+@login_required
+@rate_limit("search", limit=30, per_seconds=60)
+def search_workspace(ws_id):
+    """Retrieval preview: exactly what scoped vector search returns,
+    with attribution and token accounting. This is the surface the
+    capsule router plugs into — chat doesn't use retrieval yet."""
+    ws = get_owned_workspace(ws_id)
+    data = request.get_json(silent=True) or {}
+    query = (data.get("query") or "").strip()[:500]
+    if not query:
+        return jsonify({"error": "Empty search"}), 400
+    try:
+        qvec = embed_query(query)
+    except Exception as e:
+        return jsonify({"error": _friendly_llm_error(str(e))}), 502
+    hits = vector_search(ws.id, qvec, k=8,
+                         token_budget=RETRIEVAL_TOKEN_BUDGET)
+    by_id = {c.id: c for c in Chunk.query.filter(
+        Chunk.id.in_([h[0] for h in hits])).all()} if hits else {}
+    results = []
+    for chunk_id, score in hits:
+        chunk = by_id[chunk_id]
+        results.append({
+            "score": round(score, 3),
+            "tokens": chunk.token_count,
+            "snippet": chunk.text[:280],
+            "filename": chunk.document.filename,
+            "page": (chunk.meta or {}).get("page"),
+            "headings": (chunk.meta or {}).get("headings", []),
+        })
+    return jsonify({"results": results,
+                    "total_tokens": sum(r["tokens"] for r in results),
+                    "budget": RETRIEVAL_TOKEN_BUDGET})
+
+
+@app.route("/w/<ws_id>/sources/<src_id>/delete", methods=["POST"])
+@login_required
+def delete_source(ws_id, src_id):
+    ws = get_owned_workspace(ws_id)
+    src = db.session.get(KnowledgeSource, src_id)
+    if not src or src.workspace_id != ws.id:
+        abort(404)
+    for doc in src.documents:
+        if doc.storage_key:
+            storage.delete(doc.storage_key)
+    db.session.delete(src)  # cascades to documents (and chunks, later)
+    db.session.commit()
+    return redirect(url_for("workspace_view", ws_id=ws.id))
+
+
 # ── Workspace ────────────────────────────────────────────
 
 @app.route("/w/<ws_id>")
@@ -348,7 +490,8 @@ def rescan_workspace(ws_id):
 @login_required
 def delete_workspace(ws_id):
     ws = get_owned_workspace(ws_id)
-    db.session.delete(ws)  # cascades to chats and messages
+    storage.delete_workspace(ws.id)  # stored upload files aren't DB rows
+    db.session.delete(ws)  # cascades to sources, documents, chats, messages
     db.session.commit()
     return redirect(url_for("index"))
 

@@ -7,20 +7,25 @@
         <div>
             <h1>{{ ws.name }}</h1>
             <div class="sub">
-                {% set src = ws.github_source %}
-                <span class="mono">{{ src.uri.replace('https://', '') if src else ws.name }}</span>
-                · scanned <span id="scannedAgo">{{ (src.last_ingested_at if src else None)|timeago }}</span>
+                {% set gh = ws.github_source %}
+                {% if gh %}
+                <span class="mono">{{ gh.uri.replace('https://', '') }}</span>
+                · scanned <span id="scannedAgo">{{ gh.last_ingested_at|timeago }}</span>
+                {% else %}
+                {{ ws.sources|length }} knowledge source{{ "s" if ws.sources|length != 1 }}
+                {% endif %}
             </div>
         </div>
         <div class="head-actions">
-            <button class="btn" id="rescanBtn">↻ Rescan</button>
-            <button class="btn danger" id="disconnectBtn">Disconnect</button>
+            {% if ws.github_source %}<button class="btn" id="rescanBtn">↻ Rescan</button>{% endif %}
+            <button class="btn danger" id="disconnectBtn">Delete workspace</button>
             <button class="btn primary" id="newChatBtn">＋ New chat</button>
         </div>
     </div>
 
     <div class="error-card" id="pageError" role="alert"></div>
 
+    {% if ws.github_source %}
     <div class="section">
         <span class="lbl">Discovered context — shared by every chat in this workspace</span>
         <div class="ctx-grid">
@@ -30,6 +35,62 @@
                 <b>{{ value|ctxval if value else "Not detected" }}</b>
             </div>
             {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="section">
+        <div class="card chat-table">
+            <div class="thead">
+                <b>Knowledge sources</b>
+                <span>
+                    <button class="btn small" id="addDocsBtn">＋ Add documents</button>
+                </span>
+            </div>
+            {% for src in ws.sources %}
+            <div class="src-row">
+                <span class="src-badge">{{ "GitHub" if src.type == "github" else "Documents" }}</span>
+                <span class="src-name">
+                    {{ src.uri.replace('https://', '') if src.uri else src.name }}
+                    {% if src.type == "upload" %}
+                    · {{ src.documents|length }} file{{ "s" if src.documents|length != 1 }}
+                    {% endif %}
+                </span>
+                <span class="meta">updated {{ src.last_ingested_at|timeago }}</span>
+                <form method="POST" action="{{ url_for('delete_source', ws_id=ws.id, src_id=src.id) }}"
+                      class="src-del" data-confirm>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn small danger">Remove</button>
+                </form>
+            </div>
+            {% for doc in src.documents %}
+            <div class="doc-row">
+                <span class="doc-name" title="{{ doc.filename }}">{{ doc.filename }}</span>
+                <span class="meta">{{ "{:,.0f}".format(doc.size_bytes / 1024) }} KB</span>
+                <span class="chip {{ doc.status }}">{{ doc.status }}</span>
+                {% if doc.error %}<span class="meta doc-err">{{ doc.error }}</span>{% endif %}
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="empty-state"><p>No knowledge sources yet — add documents to get started.</p></div>
+            {% endfor %}
+        </div>
+        <input type="file" id="docsInput" multiple accept=".pdf,.docx,.txt,.md,.markdown" hidden>
+    </div>
+
+    <div class="section">
+        <div class="card chat-table">
+            <div class="thead">
+                <b>Retrieval preview</b>
+                <span>see exactly which knowledge a question would pull in</span>
+            </div>
+            <form class="rp-form" id="rpForm">
+                <input type="text" class="field" id="rpQuery" maxlength="500"
+                       placeholder="Try a question, e.g. How does TCP congestion control work?"
+                       autocomplete="off">
+                <button type="submit" class="btn" id="rpBtn">Search</button>
+            </form>
+            <div id="rpResults"></div>
         </div>
     </div>
 
@@ -107,7 +168,7 @@ if (location.hash === "#new-chat") {
     history.replaceState(null, "", location.pathname);
 }
 
-rescanBtn.addEventListener("click", async () => {
+if (rescanBtn) rescanBtn.addEventListener("click", async () => {
     pageError.classList.remove("active");
     rescanBtn.disabled = true;
     rescanBtn.innerHTML = '<span class="spinner"></span> Rescanning…';
@@ -126,6 +187,93 @@ rescanBtn.addEventListener("click", async () => {
     pageError.classList.add("active");
     rescanBtn.disabled = false;
     rescanBtn.innerHTML = "↻ Rescan";
+});
+
+/* ── Retrieval preview ── */
+const rpForm = document.getElementById("rpForm");
+const rpResults = document.getElementById("rpResults");
+const rpBtn = document.getElementById("rpBtn");
+rpForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const query = document.getElementById("rpQuery").value.trim();
+    if (!query) return;
+    rpBtn.disabled = true;
+    rpResults.innerHTML = '<div class="rp-note"><span class="spinner"></span> Searching…</div>';
+    try {
+        const res = await fetch("{{ url_for('search_workspace', ws_id=ws.id) }}", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch",
+                       "X-CSRF-Token": CSRF_TOKEN },
+            body: JSON.stringify({ query }),
+        });
+        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+        const data = await res.json();
+        rpResults.innerHTML = "";
+        if (data.error) {
+            rpResults.innerHTML = '<div class="rp-note err"></div>';
+            rpResults.firstChild.textContent = data.error;
+        } else if (!data.results.length) {
+            rpResults.innerHTML = '<div class="rp-note">No indexed knowledge matches yet — add documents above.</div>';
+        } else {
+            const head = document.createElement("div");
+            head.className = "rp-note";
+            head.textContent = data.results.length + " chunks · "
+                + data.total_tokens.toLocaleString() + " tokens (budget "
+                + data.budget.toLocaleString() + ")";
+            rpResults.appendChild(head);
+            for (const r of data.results) {
+                const row = document.createElement("div");
+                row.className = "rp-hit";
+                const where = r.filename + (r.page ? " · p." + r.page : "")
+                    + (r.headings.length ? " · " + r.headings.join(" › ") : "");
+                row.innerHTML = '<div class="rp-meta"><span class="rp-src"></span>'
+                    + '<span class="meta"></span></div><div class="rp-text"></div>';
+                row.querySelector(".rp-src").textContent = where;
+                row.querySelector(".meta").textContent =
+                    "score " + r.score + " · " + r.tokens + " tok";
+                row.querySelector(".rp-text").textContent = r.snippet + "…";
+                rpResults.appendChild(row);
+            }
+        }
+    } catch {
+        rpResults.innerHTML = '<div class="rp-note err">Could not reach the server.</div>';
+    }
+    rpBtn.disabled = false;
+});
+
+/* ── Add documents to this workspace ── */
+const addDocsBtn = document.getElementById("addDocsBtn");
+const docsInput = document.getElementById("docsInput");
+addDocsBtn.addEventListener("click", () => docsInput.click());
+docsInput.addEventListener("change", async () => {
+    if (!docsInput.files.length) return;
+    pageError.classList.remove("active");
+    addDocsBtn.disabled = true;
+    addDocsBtn.innerHTML = '<span class="spinner"></span> Uploading…';
+    const fd = new FormData();
+    for (const f of docsInput.files) fd.append("files", f, f.name);
+    try {
+        const res = await fetch("{{ url_for('upload_to_workspace', ws_id=ws.id) }}", {
+            method: "POST",
+            headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+            body: fd,
+        });
+        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+            const data = await res.json();
+            pageError.textContent = data.error || "Upload failed.";
+        } else {
+            await res.text();  // drain the progress stream
+            location.reload();
+            return;
+        }
+    } catch {
+        pageError.textContent = "Could not reach the server.";
+    }
+    pageError.classList.add("active");
+    addDocsBtn.disabled = false;
+    addDocsBtn.innerHTML = "＋ Add documents";
 });
 </script>
 {% endblock %}

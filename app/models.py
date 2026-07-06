@@ -117,8 +117,12 @@ class Document(db.Model):
     mime = db.Column(db.String(100))
     size_bytes = db.Column(db.Integer, nullable=False, default=0)
     sha256 = db.Column(db.String(64), nullable=False)
+    storage_key = db.Column(db.String(120))  # original file, via app/storage.py
+    text = db.Column(db.Text)  # extraction result; chunks derive from this
+    meta = db.Column(db.JSON, nullable=False, default=dict)  # pages, …
     status = db.Column(db.String(16), nullable=False, default="pending")
     # pending | extracted | chunked | embedded | error
+    error = db.Column(db.Text)  # user-safe extraction failure reason
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (db.UniqueConstraint("workspace_id", "sha256"),)
