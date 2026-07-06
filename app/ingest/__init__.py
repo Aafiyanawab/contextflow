@@ -72,7 +72,7 @@ def ingest_upload_batch(workspace_id, files, storage):
                    "detail": str(e)}
             continue
 
-        detail = _embed_document(doc)
+        detail = process_document(doc)
         added += 1
         yield {"type": "file", "name": filename, "status": doc.status,
                "detail": detail}
@@ -84,11 +84,12 @@ def ingest_upload_batch(workspace_id, files, storage):
            "failed": failed}
 
 
-def _embed_document(doc):
-    """Chunk + embed one extracted document. An embedding-API failure
-    leaves the document at status "chunked" with the reason recorded —
-    the text is safe and a later re-upload/reingest completes it."""
-    pieces = chunk_document(doc.text)
+def process_document(doc, kind="prose", context=""):
+    """Chunk + embed one extracted document — the shared tail of the
+    pipeline for every source type. An embedding-API failure leaves the
+    document at status "chunked" with the reason recorded — the text is
+    safe and a later re-ingestion completes it."""
+    pieces = chunk_document(doc.text, kind=kind, context=context)
     for p in pieces:
         db.session.add(Chunk(document_id=doc.id, workspace_id=doc.workspace_id,
                              seq=p["seq"], text=p["text"],

@@ -27,6 +27,7 @@ from app.config import RETRIEVAL_TOKEN_BUDGET
 from app.embeddings import embed_query, search as vector_search
 from app.ingest import ingest_upload_batch
 from app.ingest.extract import ALLOWED_EXTENSIONS
+from app.ingest.github_source import sync_github_documents
 from app.ratelimit import rate_limit
 from app.storage import LocalStorage
 from openai import OpenAI
@@ -321,12 +322,45 @@ def scan_workspace():
         ws = Workspace(user_id=user_pk, name=repo_url.split("/")[-1])
         db.session.add(ws)
         db.session.flush()  # need ws.id for the source row
-        db.session.add(KnowledgeSource(workspace_id=ws.id, type="github",
-                                       name=ws.name, uri=repo_url,
-                                       status="ready",
-                                       profile=outcome["context"],
-                                       last_ingested_at=utcnow()))
+        src = KnowledgeSource(workspace_id=ws.id, type="github",
+                              name=ws.name, uri=repo_url,
+                              status="ready",
+                              profile=outcome["context"],
+                              last_ingested_at=utcnow())
+        db.session.add(src)
         db.session.commit()
+
+        # Content indexing: repo files through the common pipeline.
+        # Same worker-thread + queue pattern as discovery above; runs
+        # under its own app context so it gets its own DB session.
+        # A failure here degrades — the workspace still exists and
+        # Rescan retries the index later.
+        src_pk = src.id
+        content_events = queue.Queue()
+        content_outcome = {}
+
+        def index_content():
+            try:
+                with app.app_context():
+                    source_row = db.session.get(KnowledgeSource, src_pk)
+                    content_outcome["stats"] = sync_github_documents(
+                        source_row, os.getenv("GITHUB_TOKEN"),
+                        progress=lambda step, detail: content_events.put(
+                            {"type": "step", "step": step, "detail": detail}))
+            except Exception:
+                content_outcome["error"] = True
+            content_events.put(None)
+
+        threading.Thread(target=index_content, daemon=True).start()
+        while True:
+            event = content_events.get()
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+        if "error" in content_outcome:
+            yield _sse({"type": "step", "step": "content",
+                        "detail": "index failed — use Rescan to retry"})
+
         done = {"type": "done",
                 "redirect": url_for("workspace_view", ws_id=ws.id),
                 "found": len(outcome["context"]) - 1}  # minus the repo key
@@ -483,7 +517,14 @@ def rescan_workspace(ws_id):
     src.profile = context
     src.last_ingested_at = utcnow()
     db.session.commit()
-    return jsonify({"ok": True})
+    # Content re-index through the common pipeline: new/changed files
+    # in, vanished files out. Profile already saved — an index failure
+    # degrades rather than failing the rescan.
+    try:
+        stats = sync_github_documents(src, os.getenv("GITHUB_TOKEN"))
+    except Exception:
+        return jsonify({"ok": True, "index": "failed"})
+    return jsonify({"ok": True, "index": stats})
 
 
 @app.route("/w/<ws_id>/delete", methods=["POST"])

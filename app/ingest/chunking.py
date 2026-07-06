@@ -62,8 +62,20 @@ def _split_oversized(block, limit):
     return parts
 
 
-def chunk_document(text: str):
-    """→ list of dicts: {seq, text, embedding_text, token_count, meta}."""
+def _code_blocks(text):
+    """Code/config files: blank-line blocks, no heading parsing — a
+    Python `# comment` must not be mistaken for a markdown heading."""
+    for raw in re.split(r"\n\s*\n", text):
+        block = raw.strip()
+        if block:
+            yield block, [], None
+
+
+def chunk_document(text: str, kind: str = "prose", context: str = ""):
+    """→ list of dicts: {seq, text, embedding_text, token_count, meta}.
+    kind: "prose" (headings/pages structure) or "code" (blank-line
+    blocks). context (e.g. the repo file path) prefixes embedding_text
+    when there is no heading trail — same contextual-retrieval trick."""
     chunks = []
     cur, cur_tokens, cur_trail, cur_page = [], 0, [], None
 
@@ -72,9 +84,9 @@ def chunk_document(text: str):
         if not cur:
             return
         body = "\n\n".join(cur)
-        trail = " > ".join(cur_trail)
-        # Prepend the trail for embedding unless the chunk already
-        # starts with that heading text.
+        trail = " > ".join(cur_trail) or context
+        # Prepend the trail (or file-path context) for embedding unless
+        # the chunk already starts with that heading text.
         embedding_text = (f"{trail}\n\n{body}"
                           if trail and not body.startswith("#") else body)
         meta = {}
@@ -87,7 +99,8 @@ def chunk_document(text: str):
                        "token_count": count_tokens(body), "meta": meta})
         cur, cur_tokens = [], 0
 
-    for block, trail, page in _blocks(text):
+    block_iter = _code_blocks(text) if kind == "code" else _blocks(text)
+    for block, trail, page in block_iter:
         pieces = ([block] if count_tokens(block) <= CHUNK_MAX_BLOCK_TOKENS
                   else _split_oversized(block, CHUNK_MAX_BLOCK_TOKENS))
         for piece in pieces:

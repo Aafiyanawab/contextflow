@@ -63,7 +63,7 @@
                     <button type="submit" class="btn small danger">Remove</button>
                 </form>
             </div>
-            {% for doc in src.documents %}
+            {% for doc in src.documents[:12] %}
             <div class="doc-row">
                 <span class="doc-name" title="{{ doc.filename }}">{{ doc.filename }}</span>
                 <span class="meta">{{ "{:,.0f}".format(doc.size_bytes / 1024) }} KB</span>
@@ -71,6 +71,9 @@
                 {% if doc.error %}<span class="meta doc-err">{{ doc.error }}</span>{% endif %}
             </div>
             {% endfor %}
+            {% if src.documents|length > 12 %}
+            <div class="doc-row"><span class="meta">…and {{ src.documents|length - 12 }} more files indexed</span></div>
+            {% endif %}
             {% else %}
             <div class="empty-state"><p>No knowledge sources yet — add documents to get started.</p></div>
             {% endfor %}

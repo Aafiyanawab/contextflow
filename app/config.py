@@ -16,6 +16,10 @@ CHUNK_TARGET_TOKENS = 500   # aim; blocks never split mid-sentence
 CHUNK_MAX_BLOCK_TOKENS = 700  # oversized single blocks get sentence-split
 RETRIEVAL_TOKEN_BUDGET = 2000  # retrieval fills a token budget, not a k
 
+# GitHub content ingestion caps — bound API calls and embedding spend.
+MAX_REPO_FILES = 50
+MAX_REPO_FILE_BYTES = 200 * 1024
+
 VALID_INTENTS = [
     "infrastructure",
     "deployment", 
