@@ -12,6 +12,7 @@ injected — filtered by detected intent — into every chat in that workspace. 
 
 ```bash
 pip install -r requirements.txt
+FLASK_APP=manage.py flask db upgrade   # create/upgrade the SQLite schema
 python app.py                    # dev server on http://localhost:5000
 
 # No test suite — pure modules have inline test blocks:
@@ -25,8 +26,10 @@ python -m app.github_discovery   # scans a hardcoded repo URL via the GitHub API
 
 ## Things that will bite you
 
-- **No migrations yet.** Schema changes mean deleting `instance/contextflow.db` (dev-only data)
-  and signing in again. Adopt Flask-Migrate before there is data worth keeping.
+- **Schema changes go through Flask-Migrate** (`FLASK_APP=manage.py flask db migrate/upgrade`),
+  never `db.create_all()` or deleting the DB — workspace memory is a product promise now.
+  `manage.py` exists because `app.py` is shadowed by the `app/` package on import. The DB URL
+  comes from `DATABASE_URL` (defaults to dev SQLite; production will point it at Postgres).
 - **SSE generators outlive the request's DB session.** Never mutate ORM objects captured from
   the request scope inside a streamed generator — changes silently don't persist. Re-fetch by
   primary key inside the generator (see `post_message` in `app.py`).

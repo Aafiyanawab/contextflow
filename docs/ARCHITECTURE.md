@@ -11,16 +11,21 @@ context, and real token usage.
 
 ```
 user 1─N oauth_identity              (provider + provider_uid, unique together)
-user 1─N workspace                   (user_id NOT NULL; unique (user_id, repo_url))
-workspace 1─N chat 1─N message
+user 1─N workspace 1─N chat 1─N message
+workspace 1─N knowledge_source 1─N document 1─N chunk        (v2 foundations)
+workspace 1─N capsule N─N chunk (capsule_chunk)              (populated from Inc 5)
 ```
 
-- `workspace.discovered_context` (JSON) is written only at connect time and on explicit rescan.
+- A workspace's GitHub connection lives in a `knowledge_source` row (`type="github"`);
+  its discovered `profile` (JSON) is written at connect time and on explicit rescan.
+  `Workspace.context_profile` is the one read path routes use.
 - Assistant `message` rows store an **orchestration snapshot** (intent, method, matched_keywords,
   injected/withheld context, tokens_in/out) so the Inspector stays accurate even after a rescan
   changes the live workspace context (rescan is forward-only).
 - All deletes cascade downward (user → workspaces → chats → messages).
-- SQLite via Flask-SQLAlchemy in `instance/contextflow.db`; no migration tooling yet.
+- Flask-SQLAlchemy on `DATABASE_URL` (default: SQLite in `instance/contextflow.db`; production
+  will point at Postgres). Schema is managed by Flask-Migrate/Alembic — `FLASK_APP=manage.py
+  flask db upgrade`; never `create_all`.
 
 ## Authentication (`app/auth.py`)
 

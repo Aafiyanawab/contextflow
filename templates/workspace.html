@@ -7,8 +7,9 @@
         <div>
             <h1>{{ ws.name }}</h1>
             <div class="sub">
-                <span class="mono">{{ ws.repo_url.replace('https://', '') }}</span>
-                · scanned <span id="scannedAgo">{{ ws.last_scanned_at|timeago }}</span>
+                {% set src = ws.github_source %}
+                <span class="mono">{{ src.uri.replace('https://', '') if src else ws.name }}</span>
+                · scanned <span id="scannedAgo">{{ (src.last_ingested_at if src else None)|timeago }}</span>
             </div>
         </div>
         <div class="head-actions">

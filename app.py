@@ -14,7 +14,9 @@ from flask import (Flask, g, render_template, request, jsonify, redirect,
 from dotenv import load_dotenv
 from sqlalchemy import func, case
 
-from app.models import db, Workspace, Chat, Message, utcnow
+from flask_migrate import Migrate
+
+from app.models import db, Workspace, KnowledgeSource, Chat, Message, utcnow
 from app.github_discovery import discover_repo_context
 from app.context_builder import CONTEXT_LABELS, INTENT_CONTEXT_MAP, build_context
 from app.intent_engine import get_intent, GREETING_RESPONSES
@@ -30,7 +32,10 @@ app.secret_key = os.getenv("SECRET_KEY")
 if not app.secret_key:
     raise RuntimeError("SECRET_KEY is not set. Add a long random value to .env "
                        "(e.g. python -c \"import secrets; print(secrets.token_hex(32))\").")
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///contextflow.db"
+# SQLite locally; production points DATABASE_URL at Postgres — the
+# app never knows the difference (see docs/ARCHITECTURE.md).
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL",
+                                                  "sqlite:///contextflow.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -40,8 +45,9 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 # 64 KB bounds memory per request with room to spare.
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 db.init_app(app)
-with app.app_context():
-    db.create_all()
+# Schema is managed by Alembic migrations now (flask db upgrade), not
+# create_all. render_as_batch is required for SQLite column drops.
+migrate = Migrate(app, db, render_as_batch=True)
 
 init_auth(app)
 
@@ -253,10 +259,12 @@ def scan_workspace():
         return jsonify({"error": "Enter a full GitHub repository URL, "
                                  "like https://github.com/org/repo"}), 400
 
-    existing = Workspace.query.filter_by(user_id=g.user.id,
-                                         repo_url=repo_url).first()
+    existing = (KnowledgeSource.query.join(Workspace)
+                .filter(Workspace.user_id == g.user.id,
+                        KnowledgeSource.uri == repo_url).first())
     if existing:
-        return jsonify({"redirect": url_for("workspace_view", ws_id=existing.id),
+        return jsonify({"redirect": url_for("workspace_view",
+                                            ws_id=existing.workspace_id),
                         "existing": True})
     user_pk = g.user.id  # capture before the streamed generator runs
 
@@ -286,12 +294,14 @@ def scan_workspace():
             yield f"data: {json.dumps(payload)}\n\n"
             return
 
-        ws = Workspace(user_id=user_pk,
-                       repo_url=repo_url,
-                       name=repo_url.split("/")[-1],
-                       discovered_context=outcome["context"],
-                       last_scanned_at=utcnow())
+        ws = Workspace(user_id=user_pk, name=repo_url.split("/")[-1])
         db.session.add(ws)
+        db.session.flush()  # need ws.id for the source row
+        db.session.add(KnowledgeSource(workspace_id=ws.id, type="github",
+                                       name=ws.name, uri=repo_url,
+                                       status="ready",
+                                       profile=outcome["context"],
+                                       last_ingested_at=utcnow()))
         db.session.commit()
         done = {"type": "done",
                 "redirect": url_for("workspace_view", ws_id=ws.id),
@@ -310,7 +320,7 @@ def scan_workspace():
 @login_required
 def workspace_view(ws_id):
     ws = get_owned_workspace(ws_id)
-    cells = [(key, OVERVIEW_LABELS.get(key, key), ws.discovered_context.get(key))
+    cells = [(key, OVERVIEW_LABELS.get(key, key), ws.context_profile.get(key))
              for key in OVERVIEW_KEYS]
     return render_template("workspace.html", ws=ws, cells=cells,
                            ws_usage=usage_stats(ws.id), active_ws=ws)
@@ -321,12 +331,15 @@ def workspace_view(ws_id):
 @rate_limit("scan", limit=10, per_seconds=600, message=SCAN_LIMIT_MESSAGE)
 def rescan_workspace(ws_id):
     ws = get_owned_workspace(ws_id)
+    src = ws.github_source
+    if not src:
+        abort(404)
     try:
-        context = discover_repo_context(ws.repo_url)
+        context = discover_repo_context(src.uri)
     except Exception as e:
         return jsonify({"error": _friendly_scan_error(str(e))}), 502
-    ws.discovered_context = context
-    ws.last_scanned_at = utcnow()
+    src.profile = context
+    src.last_ingested_at = utcnow()
     db.session.commit()
     return jsonify({"ok": True})
 
@@ -412,10 +425,10 @@ def chat_view(ws_id, chat_id):
     payload = {
         "messages": [serialize_message(m) for m in active_chat.messages],
         "usage": usage_stats(ws.id),
-        "suggestions": build_suggestions(ws.discovered_context),
+        "suggestions": build_suggestions(ws.context_profile),
         "postUrl": url_for("post_message", chat_id=active_chat.id),
     }
-    context_keys = [k for k in ws.discovered_context if k != "repo"]
+    context_keys = [k for k in ws.context_profile if k != "repo"]
     return render_template("chat.html", ws=ws, chat=active_chat,
                            context_keys=context_keys, payload=payload,
                            active_ws=ws, active_chat=active_chat)
@@ -450,7 +463,7 @@ def post_message(chat_id):
         return jsonify({"error": f"Message too long — keep it under "
                                  f"{MAX_QUERY_CHARS:,} characters."}), 400
 
-    discovered = ws.discovered_context or {}
+    discovered = ws.context_profile
     intent_result = get_intent(query)
     intent, method = intent_result["intent"], intent_result["method"]
     matched = intent_result.get("matched_keywords") or []
