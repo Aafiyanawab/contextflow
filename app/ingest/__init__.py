@@ -80,6 +80,16 @@ def ingest_upload_batch(workspace_id, files, storage):
     source.status = "ready"
     source.last_ingested_at = utcnow()
     db.session.commit()
+
+    if added:  # knowledge changed → capsules follow, automatically
+        from app.capsules import refresh_workspace
+        yield {"type": "capsules", "detail": "organizing knowledge…"}
+        stats = refresh_workspace(workspace_id)
+        yield {"type": "capsules",
+               "detail": (f"{stats['total']} capsule"
+                          f"{'s' if stats['total'] != 1 else ''} · "
+                          f"{stats['synthesized']} updated")}
+
     yield {"type": "summary", "added": added, "skipped": skipped,
            "failed": failed}
 

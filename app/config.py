@@ -20,6 +20,19 @@ RETRIEVAL_TOKEN_BUDGET = 2000  # retrieval fills a token budget, not a k
 MAX_REPO_FILES = 50
 MAX_REPO_FILE_BYTES = 200 * 1024
 
+# Knowledge Capsules. Below the floor a workspace gets one "General"
+# capsule (no clustering — small corpora don't need domain routing).
+# Synthesis runs only on stale capsules, so LLM cost scales with
+# changed knowledge, not corpus size.
+CAPSULE_FLOOR = 40            # chunks needed before clustering kicks in
+CAPSULE_MIN_CLUSTER = 4       # smaller clusters merge into neighbors
+CAPSULE_MAX_K = 20
+# Measured with text-embedding-3-small @512d: unrelated domains score
+# ~0.30-0.45 against a broad centroid, same-domain content ~0.55+.
+# 0.5 splits those bands.
+CAPSULE_ASSIGN_THRESHOLD = 0.5  # below this similarity a chunk is an outlier
+CAPSULE_SYNTHESIS_CHUNKS = 12    # representative chunks fed to synthesis
+
 VALID_INTENTS = [
     "infrastructure",
     "deployment", 

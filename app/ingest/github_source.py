@@ -115,4 +115,13 @@ def sync_github_documents(source, github_token, progress=None):
     stats = {"files": added, "unchanged": unchanged, "removed": removed,
              "chunks": chunks_made}
     report(f"{added} new · {unchanged} unchanged · {removed} removed")
+
+    if added or removed:  # knowledge changed → capsules follow
+        from app.capsules import refresh_workspace
+        cap_stats = refresh_workspace(
+            source.workspace_id,
+            progress=(lambda d: progress("capsules", d)) if progress else None)
+        stats["capsules"] = cap_stats["total"]
+        if progress:
+            progress("capsules", f"{cap_stats['total']} capsules")
     return stats

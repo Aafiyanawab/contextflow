@@ -16,13 +16,14 @@ from sqlalchemy import func, case
 
 from flask_migrate import Migrate
 
-from app.models import (db, Workspace, KnowledgeSource, Chunk, Chat,
-                        Message, utcnow)
+from app.models import (db, Workspace, KnowledgeSource, Document, Chunk,
+                        Capsule, CapsuleChunk, Chat, Message, utcnow)
 from app.github_discovery import discover_repo_context
 from app.context_builder import CONTEXT_LABELS, INTENT_CONTEXT_MAP, build_context
 from app.intent_engine import get_intent, GREETING_RESPONSES
 from app.config import OPENAI_MODEL
 from app.auth import init_auth, login_required
+from app.capsules import refresh_workspace
 from app.config import RETRIEVAL_TOKEN_BUDGET
 from app.embeddings import embed_query, search as vector_search
 from app.ingest import ingest_upload_batch
@@ -485,8 +486,11 @@ def delete_source(ws_id, src_id):
     for doc in src.documents:
         if doc.storage_key:
             storage.delete(doc.storage_key)
-    db.session.delete(src)  # cascades to documents (and chunks, later)
+    db.session.delete(src)  # cascades to documents and chunks
     db.session.commit()
+    # Knowledge changed → capsules follow: memberships prune, emptied
+    # capsules dissolve, shrunk ones re-synthesize.
+    refresh_workspace(ws.id)
     return redirect(url_for("workspace_view", ws_id=ws.id))
 
 
@@ -499,7 +503,34 @@ def workspace_view(ws_id):
     cells = [(key, OVERVIEW_LABELS.get(key, key), ws.context_profile.get(key))
              for key in OVERVIEW_KEYS]
     return render_template("workspace.html", ws=ws, cells=cells,
+                           capsules=_capsule_cards(ws.id),
                            ws_usage=usage_stats(ws.id), active_ws=ws)
+
+
+def _capsule_cards(ws_id):
+    """Capsule grid + detail payload. Read-only — users never create,
+    edit, or delete capsules; ingestion maintains them."""
+    caps = (Capsule.query.filter_by(workspace_id=ws_id)
+            .order_by(Capsule.title.asc()).all())
+    titles = {c.id: c.title for c in caps}
+    cards = []
+    for c in caps:
+        files = [f for (f,) in (db.session.query(Document.filename)
+                 .join(Chunk, Chunk.document_id == Document.id)
+                 .join(CapsuleChunk, CapsuleChunk.chunk_id == Chunk.id)
+                 .filter(CapsuleChunk.capsule_id == c.id)
+                 .distinct().limit(8))]
+        cards.append({"id": c.id, "title": c.title, "status": c.status,
+                      "keywords": (c.keywords or [])[:12],
+                      "concepts": c.concepts or [],
+                      "summary": c.summary or "",
+                      "tokens": c.token_count,
+                      "chunks": len(c.memberships),
+                      "related": [titles[r] for r in (c.related or [])
+                                  if r in titles],
+                      "files": files,
+                      "updated": timeago(c.updated_at)})
+    return cards
 
 
 @app.route("/w/<ws_id>/rescan", methods=["POST"])

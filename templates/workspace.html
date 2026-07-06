@@ -81,6 +81,36 @@
         <input type="file" id="docsInput" multiple accept=".pdf,.docx,.txt,.md,.markdown" hidden>
     </div>
 
+    {% if capsules %}
+    <div class="section">
+        <span class="lbl">Knowledge capsules — organized automatically from your sources</span>
+        <div class="cap-grid">
+            {% for cap in capsules %}
+            <button class="card cap-card" data-cap="{{ loop.index0 }}">
+                <div class="cap-title">{{ cap.title }}
+                    {% if cap.status != "fresh" %}<span class="chip">updating</span>{% endif %}
+                </div>
+                <div class="cap-pills">
+                    {% for kw in cap.keywords[:5] %}<span class="pill">{{ kw }}</span>{% endfor %}
+                </div>
+                <div class="cap-meta">{{ cap.chunks }} chunks · {{ cap.files|length }} source{{ "s" if cap.files|length != 1 }}</div>
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+
+    <dialog class="dlg cap-dlg" id="capsuleDialog">
+        <h2 id="capTitle"></h2>
+        <div class="cap-pills" id="capConcepts"></div>
+        <div class="cap-summary" id="capSummary"></div>
+        <div class="cap-foot" id="capFoot"></div>
+        <div class="dlg-actions">
+            <button type="button" class="btn" id="capClose">Close</button>
+        </div>
+    </dialog>
+    <script id="capData" type="application/json" nonce="{{ csp_nonce }}">{{ capsules|tojson }}</script>
+    {% endif %}
+
     <div class="section">
         <div class="card chat-table">
             <div class="thead">
@@ -191,6 +221,33 @@ if (rescanBtn) rescanBtn.addEventListener("click", async () => {
     rescanBtn.disabled = false;
     rescanBtn.innerHTML = "↻ Rescan";
 });
+
+/* ── Capsule detail dialog ── */
+const capDataEl = document.getElementById("capData");
+if (capDataEl) {
+    const CAPS = JSON.parse(capDataEl.textContent);
+    const capDlg = document.getElementById("capsuleDialog");
+    document.getElementById("capClose").addEventListener("click", () => capDlg.close());
+    document.querySelectorAll(".cap-card").forEach(card => {
+        card.addEventListener("click", () => {
+            const cap = CAPS[Number(card.dataset.cap)];
+            document.getElementById("capTitle").textContent = cap.title;
+            const conc = document.getElementById("capConcepts");
+            conc.innerHTML = "";
+            for (const c of cap.concepts) {
+                const s = document.createElement("span");
+                s.className = "pill"; s.textContent = c; conc.appendChild(s);
+            }
+            document.getElementById("capSummary").textContent =
+                cap.summary || "Summary is being generated — check back after the next ingestion.";
+            const foot = document.getElementById("capFoot");
+            foot.textContent = "Sources: " + cap.files.join(", ")
+                + (cap.related.length ? "  ·  Related: " + cap.related.join(", ") : "")
+                + "  ·  " + cap.tokens + " tokens · updated " + cap.updated;
+            capDlg.showModal();
+        });
+    });
+}
 
 /* ── Retrieval preview ── */
 const rpForm = document.getElementById("rpForm");

@@ -63,6 +63,11 @@ class Workspace(db.Model):
         cascade="all, delete-orphan",
         order_by="KnowledgeSource.created_at.asc()",
     )
+    capsules = db.relationship(
+        "Capsule",
+        backref="workspace",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def github_source(self):
@@ -169,6 +174,9 @@ class Capsule(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (db.UniqueConstraint("workspace_id", "slug"),)
+
+    memberships = db.relationship("CapsuleChunk", backref="capsule",
+                                  cascade="all, delete-orphan")
 
 
 class CapsuleChunk(db.Model):

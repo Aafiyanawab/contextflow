@@ -68,6 +68,7 @@ const STEPS = [
     { key: "cloud",          label: "Cloud provider" },
     { key: "framework",      label: "Framework" },
     { key: "content",        label: "Knowledge index" },
+    { key: "capsules",       label: "Knowledge capsules" },
 ];
 
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
@@ -253,8 +254,15 @@ uploadForm.addEventListener("submit", async (e) => {
     fd.append("name", document.getElementById("wsName").value.trim());
     for (const f of picked) fd.append("files", f, f.webkitRelativePath || f.name);
 
+    let capRow = null;
     await postAndHandle("/workspaces/upload", fd, {}, (event) => {
         if (event.type === "file") addFileRow(event.name, event.status, event.detail);
+        else if (event.type === "capsules") {
+            if (!capRow) {
+                addFileRow("Knowledge capsules", "extracted", event.detail);
+                capRow = stepsBox.lastChild;
+            } else capRow.querySelector(".detail").textContent = event.detail;
+        }
         else if (event.type === "error") { showError(event.message); return false; }
         else if (event.type === "summary") {
             document.getElementById("successText").textContent =
