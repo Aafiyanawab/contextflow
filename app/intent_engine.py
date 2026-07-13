@@ -128,6 +128,73 @@ Reply with only the category name, nothing else."""
     return intent
 
 
+# ── Capsule-first routing (Increment 6) ─────────────────
+# The v1 idea — rules first, model only when unsure — with the keyword
+# vocabulary now GENERATED from the user's own knowledge (capsule
+# keywords) instead of hardcoded infra terms. Order:
+#   1. greeting fast path            (canned reply, zero cost)
+#   2. capsule keyword match         (free)
+#   3. semantic: query embedding vs capsule centroids (~$0.000002)
+#   4. nothing matches -> global-fallback (workspace-wide retrieval)
+
+def route_query(user_query: str, capsules, query_vec=None):
+    """→ {intent, method, greeting_key, matched_keywords,
+         capsules: [Capsule], withheld: [(Capsule, reason)]}.
+    query_vec (unit numpy vector) is required for the semantic step —
+    pass the embedding the caller already computed for retrieval."""
+    q = user_query.lower().strip()
+
+    if q in GREETING_RESPONSES or (len(q.split()) <= 4 and
+                                   any(g in q for g in GREETING_RESPONSES)):
+        key = q if q in GREETING_RESPONSES else next(
+            g for g in GREETING_RESPONSES if g in q)
+        return {"intent": "general", "method": "rule-based",
+                "greeting_key": key, "matched_keywords": [key],
+                "capsules": [], "withheld": []}
+
+    from app.config import MAX_ROUTED_CAPSULES, ROUTE_SEMANTIC_THRESHOLD
+
+    scored = []
+    for cap in capsules:
+        matched = [kw for kw in (cap.keywords or []) if kw and kw in q]
+        if matched:
+            scored.append((len(matched), cap, matched))
+    if scored:
+        scored.sort(key=lambda s: -s[0])
+        chosen = scored[:MAX_ROUTED_CAPSULES]
+        chosen_ids = {cap.id for _, cap, _ in chosen}
+        withheld = [(cap, "no keyword match")
+                    for cap in capsules if cap.id not in chosen_ids]
+        matched_kws = sorted({kw for _, _, kws in chosen for kw in kws})
+        return {"intent": "knowledge", "method": "keywords",
+                "greeting_key": None, "matched_keywords": matched_kws,
+                "capsules": [cap for _, cap, _ in chosen],
+                "withheld": withheld}
+
+    if query_vec is not None:
+        from app.embeddings import unpack
+        sims = [(float(unpack(cap.centroid) @ query_vec), cap)
+                for cap in capsules if cap.centroid]
+        sims.sort(key=lambda s: -s[0])
+        chosen = [(s, cap) for s, cap in sims[:MAX_ROUTED_CAPSULES]
+                  if s >= ROUTE_SEMANTIC_THRESHOLD]
+        if chosen:
+            chosen_ids = {cap.id for _, cap in chosen}
+            withheld = [(cap, f"similarity {s:.2f} — below "
+                              f"{ROUTE_SEMANTIC_THRESHOLD}")
+                        for s, cap in sims if cap.id not in chosen_ids]
+            return {"intent": "knowledge", "method": "semantic",
+                    "greeting_key": None, "matched_keywords": [],
+                    "capsules": [cap for _, cap in chosen],
+                    "withheld": withheld}
+
+    return {"intent": "knowledge", "method": "global-fallback",
+            "greeting_key": None, "matched_keywords": [],
+            "capsules": [],
+            "withheld": [(cap, "no keyword or semantic match")
+                         for cap in capsules]}
+
+
 # ── Main Function ────────────────────────────────────────
 def get_intent(user_query: str) -> dict:
     """

@@ -83,12 +83,16 @@ def refresh_workspace(workspace_id, progress=None):
               if link.chunk_id in valid_ids}
     unassigned = [c for c in chunks if c.id not in linked]
 
-    outgrew_floor = (len(capsules) == 1 and capsules[0].slug == "general")
+    # One-or-zero capsules over a floor-sized corpus is under-clustered —
+    # whether it's the General floor capsule or a single small-source
+    # capsule that a big upload just joined (mixed workspaces). Either
+    # way, graduate to real domain clustering.
+    under_clustered = (len(capsules) <= 1 and len(chunks) >= CAPSULE_FLOOR)
     if len(chunks) < CAPSULE_FLOOR:
         touched |= _ensure_general_capsule(workspace_id, chunks, capsules)
-    elif not any(cap.centroid for cap in capsules) or outgrew_floor:
-        # First build — or the corpus just outgrew the single-General
-        # floor and graduates to real domain clustering.
+    elif not any(cap.centroid for cap in capsules) or under_clustered:
+        # First build — or the corpus just outgrew a too-small capsule
+        # set and graduates to real domain clustering.
         touched |= _full_build(workspace_id, chunks, capsules)
     elif unassigned:
         touched |= _assign_incremental(workspace_id, unassigned, capsules)

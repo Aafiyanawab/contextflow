@@ -22,7 +22,10 @@ python -m app.github_discovery   # scans a hardcoded repo URL via the GitHub API
 ```
 
 `.env` requires: `SECRET_KEY` (app refuses to boot without it), `OPENAI_API_KEY`,
-`GITHUB_TOKEN` (repo scanning), `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` (login).
+`GITHUB_TOKEN` (repo scanning). Login providers are optional and shown only when configured:
+`GITHUB_OAUTH_CLIENT_ID`/`_SECRET`, `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`; email+password needs no
+config. Providers live in a registry in `app/auth.py` — adding one is a `Provider` entry plus an
+`oauth.register()` block.
 
 ## Things that will bite you
 
@@ -46,5 +49,12 @@ python -m app.github_discovery   # scans a hardcoded repo URL via the GitHub API
 - **All access control flows through `get_owned_workspace()` / `get_owned_chat()`** in `app.py`.
   Never query Workspace/Chat directly in a route — that chokepoint is where team workspaces and
   RBAC will plug in.
+- **RBAC is three roles** — `super_admin` | `company_admin` | `employee` (`User.role`; see
+  `is_admin`/`is_super_admin`). Guard admin routes with `@admin_required` (Super + Company
+  Admin, 403 for employees) or `@super_admin_required` (companies, audit log, system). Company
+  Admins are scoped to their `company_id` via `_scope_ids()` — thread it through any new admin
+  query. **AI internals (Knowledge Capsules, retrieval, detected stack, intent, chunk/token
+  data) are admin-only** now: never render them on user-facing workspace/chat pages — the
+  `/admin/ai` tools are the one surface for them. Privileged mutations should call `audit()`.
 - **Every push to `main` deploys straight to EC2** via `.github/workflows/deploy.yml` — there is
   no test or lint gate in the pipeline.

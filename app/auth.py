@@ -1,8 +1,9 @@
-"""Authentication: OAuth login (GitHub now, Google later), session
-management, the login_required decorator, and CSRF protection.
+"""Authentication: social login (GitHub, Google), email + password,
+session management, the login_required decorator, and CSRF protection.
 
-Adding a provider = one oauth.register() block in init_auth() plus a
-button on the login page. Access tokens are used for the profile fetch
+Providers live in a registry (PROVIDERS). Adding one = a Provider entry
+plus its oauth.register() block; the routes and login page are
+provider-agnostic. Access tokens are used once for the profile fetch
 during the callback and never stored.
 
 CSRF: every session carries a random token; check_csrf() rejects any
@@ -13,38 +14,111 @@ most cross-site posts; the token is defense in depth.
 """
 import hmac
 import os
+import re
 import secrets
 from functools import wraps
 
 from flask import (Blueprint, abort, current_app, g, jsonify, redirect,
                    render_template, request, session, url_for)
 from authlib.integrations.flask_client import OAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.models import db, User, OAuthIdentity, utcnow
+from app.ratelimit import throttle
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MIN_PASSWORD_LEN = 8
 
 oauth = OAuth()
 auth_bp = Blueprint("auth", __name__)
 
 LOGIN_ERRORS = {
-    "not_configured": "GitHub login isn't configured on this server — "
-                      "set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET.",
-    "oauth_failed": "GitHub sign-in didn't complete. Please try again.",
-    "access_denied": "You cancelled the GitHub authorization.",
+    "not_configured": "That sign-in method isn't configured on this server.",
+    "oauth_failed": "Sign-in didn't complete. Please try again.",
+    "access_denied": "You cancelled the authorization.",
     "session_expired": "Your session expired. Please sign in again.",
+    "bad_credentials": "Invalid email or password.",
+    "email_taken": "An account with that email already exists — sign in instead.",
+    "weak_password": "Password must be at least 8 characters.",
+    "invalid_email": "Enter a valid email address.",
+    "throttled": "Too many attempts. Please wait a minute and try again.",
+    "account_disabled": "This account has been deactivated. Contact an administrator.",
 }
+
+
+def _github_profile(client, token):
+    """GitHub: profile + a separate call for the verified primary email."""
+    profile = client.get("user", token=token).json()
+    emails = client.get("user/emails", token=token).json()
+    email = None
+    if isinstance(emails, list):
+        email = next((e["email"] for e in emails
+                      if e.get("primary") and e.get("verified")), None)
+    return {"uid": str(profile["id"]),
+            "email": email,  # already verified by construction
+            "email_verified": email is not None,
+            "name": profile.get("name") or profile.get("login"),
+            "avatar_url": profile.get("avatar_url")}
+
+
+def _google_profile(client, token):
+    """Google: OIDC id_token carries a verified-email claim."""
+    info = token.get("userinfo") or client.userinfo(token=token)
+    return {"uid": info["sub"],
+            "email": info.get("email"),
+            "email_verified": bool(info.get("email_verified")),
+            "name": info.get("name") or info.get("email"),
+            "avatar_url": info.get("picture")}
+
+
+class Provider:
+    def __init__(self, name, label, env_id, env_secret, extract):
+        self.name = name
+        self.label = label
+        self.env_id = env_id
+        self.env_secret = env_secret
+        self.extract = extract
+
+    @property
+    def configured(self):
+        return bool(os.getenv(self.env_id) and os.getenv(self.env_secret))
+
+
+PROVIDERS = {
+    "google": Provider("google", "Google",
+                       "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET",
+                       _google_profile),
+    "github": Provider("github", "GitHub",
+                       "GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET",
+                       _github_profile),
+}
+
+
+def configured_providers():
+    """OAuth providers the server can actually offer, in display order."""
+    return [p for p in PROVIDERS.values() if p.configured]
 
 
 def init_auth(app):
     oauth.init_app(app)
-    oauth.register(
-        name="github",
-        client_id=os.getenv("GITHUB_OAUTH_CLIENT_ID"),
-        client_secret=os.getenv("GITHUB_OAUTH_CLIENT_SECRET"),
-        access_token_url="https://github.com/login/oauth/access_token",
-        authorize_url="https://github.com/login/oauth/authorize",
-        api_base_url="https://api.github.com/",
-        client_kwargs={"scope": "read:user user:email"},
-    )
+    if PROVIDERS["github"].configured:
+        oauth.register(
+            name="github",
+            client_id=os.getenv("GITHUB_OAUTH_CLIENT_ID"),
+            client_secret=os.getenv("GITHUB_OAUTH_CLIENT_SECRET"),
+            access_token_url="https://github.com/login/oauth/access_token",
+            authorize_url="https://github.com/login/oauth/authorize",
+            api_base_url="https://api.github.com/",
+            client_kwargs={"scope": "read:user user:email"},
+        )
+    if PROVIDERS["google"].configured:
+        oauth.register(
+            name="google",
+            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={"scope": "openid email profile"},
+        )
     app.register_blueprint(auth_bp)
 
 
@@ -54,8 +128,11 @@ def load_user():
     user_id = session.get("user_id")
     if user_id:
         g.user = db.session.get(User, user_id)
-        if g.user is None:  # stale cookie for a deleted user
+        # Stale cookie for a deleted user, or an account deactivated
+        # mid-session — either way, end the session immediately.
+        if g.user is None or not g.user.active:
             session.clear()
+            g.user = None
     if "csrf_token" not in session:
         session["csrf_token"] = secrets.token_urlsafe(32)
 
@@ -104,21 +181,62 @@ def login_required(view):
     return wrapped
 
 
+def admin_required(view):
+    """Admin-only. A signed-in non-admin gets a 403 (an explicit "you
+    can't access this"), which is also a useful signal: if an admin
+    route ever returns 404, the route isn't registered (stale server),
+    not a permission problem. Anonymous users fall through to
+    login_required's redirect/401 handling."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if g.user is not None and not g.user.is_admin:
+            abort(403)
+        return view(*args, **kwargs)
+    return login_required(wrapped)
+
+
+def super_admin_required(view):
+    """Super-Admin only (platform-wide actions: companies, provider
+    config, audit log). Company Admins and everyone else get 403."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if g.user is not None and not g.user.is_super_admin:
+            abort(403)
+        return view(*args, **kwargs)
+    return login_required(wrapped)
+
+
 @auth_bp.route("/login")
 def login():
     if g.user:
         return redirect(url_for("index"))
     error_key = request.args.get("error")
     return render_template("login.html",
+                           providers=configured_providers(),
                            error=LOGIN_ERRORS.get(error_key),
                            next_url=request.args.get("next", ""))
 
 
+def _establish_session(user, next_url):
+    """Rotate the session and log the user in. Shared by every provider
+    and the email path — the one place a session is created, and so the
+    one place the deactivation gate is enforced."""
+    if not user.active:
+        return redirect(url_for("auth.login", error="account_disabled"))
+    user.last_login_at = utcnow()
+    db.session.commit()
+    session.clear()  # drop pre-login state, then establish the session
+    session["user_id"] = user.id
+    session.permanent = True
+    return redirect(next_url if next_url.startswith("/") else url_for("index"))
+
+
 @auth_bp.route("/auth/<provider>")
 def authorize(provider):
-    if provider != "github":
+    prov = PROVIDERS.get(provider)
+    if not prov:
         abort(404)
-    if not os.getenv("GITHUB_OAUTH_CLIENT_ID"):
+    if not prov.configured:
         return redirect(url_for("auth.login", error="not_configured"))
     next_url = request.args.get("next", "")
     session["next_url"] = next_url if next_url.startswith("/") else ""
@@ -128,16 +246,16 @@ def authorize(provider):
 
 @auth_bp.route("/auth/<provider>/callback")
 def callback(provider):
-    if provider != "github":
+    prov = PROVIDERS.get(provider)
+    if not prov:
         abort(404)
-    if request.args.get("error"):  # user cancelled on GitHub's side
+    if request.args.get("error"):  # user cancelled on the provider's side
         return redirect(url_for("auth.login", error="access_denied"))
 
     client = oauth.create_client(provider)
     try:
         token = client.authorize_access_token()  # used once, never stored
-        profile = client.get("user", token=token).json()
-        emails = client.get("user/emails", token=token).json()
+        info = prov.extract(client, token)
     except Exception as e:
         # Log only the exception type — never request.url (carries the
         # single-use OAuth code), session contents, or a locals-bearing
@@ -146,38 +264,98 @@ def callback(provider):
                                    provider, type(e).__name__)
         return redirect(url_for("auth.login", error="oauth_failed"))
 
-    provider_uid = str(profile["id"])
-    email = None
-    if isinstance(emails, list):
-        email = next((e["email"] for e in emails
-                      if e.get("primary") and e.get("verified")), None)
-
-    identity = OAuthIdentity.query.filter_by(provider=provider,
-                                             provider_uid=provider_uid).first()
+    identity = OAuthIdentity.query.filter_by(
+        provider=provider, provider_uid=info["uid"]).first()
     if identity:
         user = identity.user
     else:
-        # Link to an existing account with the same verified email,
-        # otherwise create a new user.
-        user = User.query.filter_by(email=email).first() if email else None
+        # Link to an existing account ONLY on a verified email — an
+        # unverified provider email must never take over an account.
+        user = None
+        if info["email"] and info["email_verified"]:
+            user = User.query.filter_by(email=info["email"]).first()
         if user is None:
-            user = User(name=profile.get("name") or profile.get("login"),
-                        email=email,
-                        avatar_url=profile.get("avatar_url"))
+            user = User(name=info["name"], email=info["email"],
+                        avatar_url=info["avatar_url"])
             db.session.add(user)
             db.session.flush()
         db.session.add(OAuthIdentity(user_id=user.id, provider=provider,
-                                     provider_uid=provider_uid))
+                                     provider_uid=info["uid"]))
 
-    user.last_login_at = utcnow()
-    user.avatar_url = profile.get("avatar_url") or user.avatar_url
-    db.session.commit()
+    if info["avatar_url"]:
+        user.avatar_url = info["avatar_url"]
+    return _establish_session(user, session.pop("next_url", ""))
 
-    next_url = session.pop("next_url", "")
-    session.clear()  # drop any pre-login state, then establish the session
-    session["user_id"] = user.id
-    session.permanent = True
-    return redirect(next_url if next_url.startswith("/") else url_for("index"))
+
+# ── Email + password ─────────────────────────────────────
+# No email verification and no password reset yet (both need mail
+# infrastructure — deferred to the AWS/SES phase). Accounts are usable
+# immediately; they only ever grant access to their own workspaces.
+
+def _auth_key():
+    """Throttle key: client IP. X-Forwarded-For's first hop when behind
+    a trusted proxy, else the socket address."""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return fwd.split(",")[0].strip() or request.remote_addr or "unknown"
+
+
+@auth_bp.route("/login/email", methods=["GET", "POST"])
+def login_email():
+    if g.user:
+        return redirect(url_for("index"))
+    next_url = request.values.get("next", "")
+    if request.method == "GET":
+        return render_template("email_auth.html", mode="signin",
+                               next_url=next_url, error=None)
+
+    # Brute-force defence: throttle by IP and by target email.
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+    if (throttle("auth", _auth_key(), 10, 60)
+            or throttle("auth", email, 10, 300)):
+        return _email_error("signin", "throttled", next_url)
+
+    user = User.query.filter_by(email=email).first() if email else None
+    # Constant-ish work + identical error whether the email exists or
+    # not: no account enumeration.
+    if not user or not user.password_hash \
+            or not check_password_hash(user.password_hash, password):
+        return _email_error("signin", "bad_credentials", next_url)
+    return _establish_session(user, next_url)
+
+
+@auth_bp.route("/signup", methods=["GET", "POST"])
+def signup():
+    if g.user:
+        return redirect(url_for("index"))
+    next_url = request.values.get("next", "")
+    if request.method == "GET":
+        return render_template("email_auth.html", mode="signup",
+                               next_url=next_url, error=None)
+
+    if throttle("auth", _auth_key(), 10, 60):
+        return _email_error("signup", "throttled", next_url)
+    name = (request.form.get("name") or "").strip()[:120]
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+    if not EMAIL_RE.match(email):
+        return _email_error("signup", "invalid_email", next_url)
+    if len(password) < MIN_PASSWORD_LEN:
+        return _email_error("signup", "weak_password", next_url)
+    if User.query.filter_by(email=email).first():
+        # Covers both email and OAuth-only accounts on this address.
+        return _email_error("signup", "email_taken", next_url)
+
+    user = User(name=name or email.split("@")[0], email=email,
+                password_hash=generate_password_hash(password))
+    db.session.add(user)
+    db.session.flush()
+    return _establish_session(user, next_url)
+
+
+def _email_error(mode, error_key, next_url):
+    return render_template("email_auth.html", mode=mode, next_url=next_url,
+                           error=LOGIN_ERRORS.get(error_key)), 400
 
 
 @auth_bp.route("/logout", methods=["POST"])

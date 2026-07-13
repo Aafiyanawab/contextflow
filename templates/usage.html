@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Usage — ContextFlow{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-head">
+        <div>
+            <h1>Your usage</h1>
+            <div class="sub">Only your own activity — nobody else's.</div>
+        </div>
+    </div>
+
+    <div class="stat-grid">
+        <div class="stat"><span class="stat-k">Total tokens (30d)</span><b class="stat-v">{{ "{:,}".format(stats.tokens) }}</b></div>
+        <div class="stat"><span class="stat-k">Today's tokens</span><b class="stat-v">{{ "{:,}".format(today) }}</b></div>
+        <div class="stat"><span class="stat-k">Conversations</span><b class="stat-v">{{ "{:,}".format(stats.queries) }}</b></div>
+        <div class="stat"><span class="stat-k">Documents</span><b class="stat-v">{{ counts.documents }}</b></div>
+        <div class="stat"><span class="stat-k">Storage used</span><b class="stat-v">{{ storage|filesizeformat }}</b></div>
+        <div class="stat"><span class="stat-k">Estimated cost</span><b class="stat-v accent">{{ stats.cost|usd }}</b></div>
+    </div>
+
+    <div class="section">
+        <div class="sec-head">
+            <span class="lbl">Tokens per day</span>
+            <span class="meta">Last 14 days</span>
+        </div>
+        <div class="card chart-card">
+            {% set maxt = (series|map(attribute='tokens')|max) or 1 %}
+            {% if (series|map(attribute='tokens')|select|list) %}
+            <div class="bars">
+                {% for d in series %}
+                <div class="bar-col">
+                    <div class="bar-track">
+                        <div class="bar accent" style="height: {{ ((d.tokens * 100 / maxt)|round(1)) if d.tokens else 0 }}%"
+                             title="{{ d.label }}: {{ '{:,}'.format(d.tokens) }} tokens"></div>
+                    </div>
+                    <span class="bar-lbl">{{ d.label.split(' ')[1] }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state"><p>No usage yet. Start a conversation to see your activity here.</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

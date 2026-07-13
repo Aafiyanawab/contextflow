@@ -1,0 +1,106 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}AI Diagnostics{% endblock %}
+{% block admin_sub %}Inspect ContextFlow's AI retrieval engine, indexed knowledge, knowledge graph, retrieval health and workspace indexing.{% endblock %}
+
+{% block admin_body %}
+{% if not rows %}
+<div class="card"><div class="empty-state"><p>No workspaces to inspect yet.</p></div></div>
+{% else %}
+<div class="ai-layout">
+    <aside class="ai-picker">
+        <span class="lbl">Workspace</span>
+        {% for r in rows %}
+        <a class="ai-ws {% if detail and r.ws.id == detail.ws.id %}on{% endif %}"
+           href="{{ url_for('admin_ai_tools', ws=r.ws.id) }}">
+            <span class="ai-ws-name">{{ r.ws.name }}</span>
+            <span class="ai-ws-meta">{{ r.capsules }} index entr{{ "ies" if r.capsules != 1 else "y" }}</span>
+        </a>
+        {% endfor %}
+    </aside>
+
+    <div class="ai-detail">
+        {% if detail %}
+        <div class="ai-detail-head">
+            <h2>{{ detail.ws.name }}</h2>
+            {% if detail.ws.owner %}<span class="meta">{{ detail.ws.owner.email }}</span>{% endif %}
+        </div>
+
+        {% set d = detail.diag %}
+        <div class="section">
+            <span class="lbl">Retrieval health</span>
+            <div class="diag-status">
+                <div class="diag-badge">
+                    <span class="diag-k">Retrieval health</span>
+                    <span class="badge badge-{{ d.health[0] }}">{{ d.health[1] }}</span>
+                </div>
+                <div class="diag-badge">
+                    <span class="diag-k">Index status</span>
+                    <span class="badge badge-{{ d.index_status[0] }}">{{ d.index_status[1] }}</span>
+                </div>
+                <div class="diag-badge">
+                    <span class="diag-k">Embedding status</span>
+                    <span class="badge badge-{{ 'good' if d.chunks and d.embedded == d.chunks else ('warn' if d.chunks else 'muted') }}">{{ d.embedded }}/{{ d.chunks }} embedded</span>
+                </div>
+                <div class="diag-badge">
+                    <span class="diag-k">Last indexed</span>
+                    <span class="badge badge-muted">{{ d.last_indexed|timeago if d.last_indexed else "never" }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-grid">
+            <div class="stat"><span class="stat-ico">⧉</span><span class="stat-k">Knowledge sources</span><b class="stat-v">{{ d.sources }}</b></div>
+            <div class="stat"><span class="stat-ico">📄</span><span class="stat-k">Indexed documents</span><b class="stat-v">{{ d.documents }}</b></div>
+            <div class="stat"><span class="stat-ico">✦</span><span class="stat-k">Knowledge index</span><b class="stat-v">{{ d.capsules }}</b></div>
+            <div class="stat"><span class="stat-ico">▤</span><span class="stat-k">Indexed chunks</span><b class="stat-v">{{ "{:,}".format(d.chunks) }}</b></div>
+        </div>
+        <div class="stat-grid">
+            <div class="stat"><span class="stat-ico">◉</span><span class="stat-k">Context coverage</span><b class="stat-v {{ 'good' if d.coverage == 100 and d.chunks else '' }}">{{ d.coverage }}%</b></div>
+            <div class="stat"><span class="stat-ico">🐙</span><span class="stat-k">Repositories</span><b class="stat-v">{{ d.repositories }}</b></div>
+        </div>
+
+        {% if detail.cells %}
+        <div class="section">
+            <span class="lbl">Detected stack</span>
+            <div class="card pad">
+                <div class="ctx-grid">
+                    {% for key, label, val in detail.cells %}
+                    <div class="ctx-cell"><span class="k">{{ label }}</span><b>{{ val|ctxval }}</b></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="section">
+            <span class="lbl">Knowledge Index</span>
+            <div class="card tbl-card">
+                <div class="tbl-scroll">
+                <table class="tbl">
+                    <thead><tr><th>Index entry</th><th>Status</th><th class="num">Chunks</th><th class="num">Tokens</th><th class="num">Docs</th><th>Related</th></tr></thead>
+                    <tbody>
+                        {% for c in detail.capsules %}
+                        <tr>
+                            <td>
+                                <span class="tbl-name">{{ c.title }}</span>
+                                {% if c.keywords %}<span class="tbl-email">{{ c.keywords[:6]|join(', ') }}</span>{% endif %}
+                            </td>
+                            <td><span class="badge badge-{{ 'good' if c.status == 'fresh' else 'warn' }}">{{ c.status }}</span></td>
+                            <td class="num">{{ c.chunks }}</td>
+                            <td class="num">{{ "{:,}".format(c.tokens) }}</td>
+                            <td class="num">{{ c.doc_count }}</td>
+                            <td class="meta">{{ c.related|join(', ') or "—" }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6"><div class="empty-state"><p>No index entries — this workspace has no indexed knowledge yet.</p></div></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

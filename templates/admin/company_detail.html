@@ -1,0 +1,140 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}{{ c.name }}{% endblock %}
+{% block admin_sub %}Company · created {{ c.created_at|timeago }} · {{ members|length }} member{{ "s" if members|length != 1 }}.{% endblock %}
+{% block admin_actions %}
+<a class="btn" href="{{ url_for('admin_companies') }}">← All companies</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="stat-grid">
+    <div class="stat"><span class="stat-ico">◔</span><span class="stat-k">Members</span><b class="stat-v">{{ members|length }}</b></div>
+    <div class="stat"><span class="stat-ico">▦</span><span class="stat-k">Workspaces</span><b class="stat-v">{{ metrics.workspaces }}</b></div>
+    <div class="stat"><span class="stat-ico">▤</span><span class="stat-k">Conversations</span><b class="stat-v">{{ metrics.conversations }}</b></div>
+    <div class="stat"><span class="stat-ico">$</span><span class="stat-k">Estimated cost</span><b class="stat-v accent">{{ metrics.cost|usd }}</b></div>
+</div>
+<div class="stat-grid">
+    <div class="stat"><span class="stat-ico">📄</span><span class="stat-k">Documents</span><b class="stat-v">{{ metrics.documents }}</b></div>
+    <div class="stat"><span class="stat-ico">⧉</span><span class="stat-k">Repositories</span><b class="stat-v">{{ metrics.repositories }}</b></div>
+    <div class="stat"><span class="stat-ico">▥</span><span class="stat-k">Storage used</span><b class="stat-v">{{ metrics.storage|filesizeformat }}</b></div>
+    <div class="stat"><span class="stat-ico">Σ</span><span class="stat-k">Token usage</span><b class="stat-v">{{ "{:,}".format(metrics.tokens) }}</b></div>
+</div>
+
+<div class="section" id="edit">
+    <span class="lbl">Company settings</span>
+    <div class="card pad">
+        <form method="POST" action="{{ url_for('admin_edit_company', company_id=c.id) }}" class="detail-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="field-row">
+                <label style="flex:1">Company name
+                    <input class="field" name="name" value="{{ c.name }}" maxlength="120" autocomplete="off" required>
+                </label>
+                <label style="flex:1">Company admin
+                    <select class="field" name="admin_id">
+                        <option value="">{% if admin %}Keep {{ admin.email }}{% else %}— None —{% endif %}</option>
+                        {% for u in members if not u.is_super_admin %}
+                        <option value="{{ u.id }}" {% if admin and u.id == admin.id %}disabled{% endif %}>{{ u.email }}{% if admin and u.id == admin.id %} (current){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn primary">Save changes</button>
+                <a class="btn" href="{{ url_for('admin_companies') }}">Cancel</a>
+            </div>
+            {% if not members %}
+            <p class="meta" style="margin-top:10px">Assign users to this company from <b>Users → (a user) → company</b> before choosing an admin.</p>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<div class="section">
+    <span class="lbl">Members ({{ members|length }})</span>
+    <div class="card list-card">
+        {% for u in members %}
+        <a class="list-row" href="{{ url_for('admin_user_detail', user_id=u.id) }}">
+            <span class="list-main">
+                <span class="list-title">{{ u.name or u.email }}</span>
+                <span class="role-badge sm {{ 'admin' if u.role != 'employee' else '' }}">{{ u.role.replace('_', ' ') }}</span>
+                {% if not u.active %}<span class="role-badge sm off">inactive</span>{% endif %}
+            </span>
+            <span class="meta">{{ u.email }}</span>
+        </a>
+        {% else %}
+        <div class="empty-state"><p>No members yet. Assign users to this company from a user's profile.</p></div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="section">
+    <span class="lbl">Workspaces ({{ metrics.workspaces }})</span>
+    <div class="card tbl-card">
+        <div class="tbl-scroll">
+        <table class="tbl">
+            <thead><tr><th>Workspace</th><th>Owner</th><th class="num">Docs</th><th class="num">Sources</th><th class="num">Convos</th><th class="num">Est. cost</th><th class="num">Last active</th></tr></thead>
+            <tbody>
+                {% for r in workspaces %}
+                <tr>
+                    <td><span class="tbl-name">{{ r.ws.name }}</span></td>
+                    <td class="meta">{{ r.owner.email if r.owner else "—" }}</td>
+                    <td class="num">{{ r.documents }}</td>
+                    <td class="num">{{ r.sources }}</td>
+                    <td class="num">{{ r.conversations }}</td>
+                    <td class="num">{{ r.cost|usd }}</td>
+                    <td class="num meta">{{ r.last_activity|timeago if r.last_activity else "—" }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7"><div class="empty-state"><p>No workspaces in this company yet.</p></div></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <span class="lbl">Danger zone</span>
+    <div class="card danger-zone">
+        <div>
+            <b>Delete this company</b>
+            <p class="meta">The company is removed and its members are moved to Unassigned. Their workspaces, knowledge and chats are kept.</p>
+        </div>
+        <button type="button" class="btn danger js-del-company"
+                data-name="{{ c.name }}" data-members="{{ members|length }}"
+                data-url="{{ url_for('admin_delete_company', company_id=c.id) }}">Delete company</button>
+    </div>
+</div>
+
+<dialog class="dlg" id="delCompanyDialog">
+    <form method="POST" id="delCompanyForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2>Delete company</h2>
+        <p class="dlg-line">Company: <b id="delCompanyName"></b></p>
+        <div class="warn-card" id="delCompanyWarn" role="alert"></div>
+        <div class="dlg-actions">
+            <button type="button" class="btn" id="delCompanyCancel">Cancel</button>
+            <button type="submit" class="btn danger">Delete company</button>
+        </div>
+    </form>
+</dialog>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+    const dlg = document.getElementById("delCompanyDialog");
+    const form = document.getElementById("delCompanyForm");
+    document.querySelectorAll(".js-del-company").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            form.action = btn.dataset.url;
+            document.getElementById("delCompanyName").textContent = btn.dataset.name;
+            const n = parseInt(btn.dataset.members, 10) || 0;
+            document.getElementById("delCompanyWarn").innerHTML =
+                "Deleting a company is <b>permanent</b>. " + (n
+                  ? n + " user(s) will be moved to <b>Unassigned</b> — their workspaces, knowledge and chats are kept."
+                  : "This company has no members.");
+            dlg.showModal();
+        });
+    });
+    document.getElementById("delCompanyCancel").addEventListener("click", () => dlg.close());
+})();
+</script>
+{% endblock %}

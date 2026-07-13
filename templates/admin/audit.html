@@ -1,0 +1,25 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Audit Log{% endblock %}
+{% block admin_sub %}Privileged actions, most recent first ({{ logs|length }} shown).{% endblock %}
+
+{% block admin_body %}
+<div class="card tbl-card">
+    <div class="tbl-scroll">
+    <table class="tbl">
+        <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td class="meta">{{ log.created_at|timeago }}</td>
+                <td>{{ log.actor_email or "—" }}</td>
+                <td><span class="role-badge sm">{{ log.action }}</span></td>
+                <td class="meta">{{ log.target or "—" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4"><div class="empty-state"><p>No privileged actions recorded yet.</p></div></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Profile — ContextFlow{% endblock %}
+
+{% block content %}
+<div class="page profile-page">
+    <div class="profile-hero">
+        {% if user.avatar_url %}
+        <img class="profile-avatar" src="{{ user.avatar_url }}" alt="" width="64" height="64">
+        {% else %}
+        <span class="profile-avatar fallback">{{ (user.name or "?")[0]|upper }}</span>
+        {% endif %}
+        <div class="profile-id">
+            <h1>{{ user.name or "Your account" }}</h1>
+            <div class="profile-meta">
+                <span>{{ user.email }}</span>
+                {% if user.is_admin %}<span class="role-badge admin">{{ user.role|rolelabel }}</span>
+                {% else %}<span class="role-badge">{{ user.role|rolelabel }}</span>{% endif %}
+            </div>
+            <div class="profile-meta faint">
+                Joined {{ user.created_at|timeago }} · Last active {{ last_activity|timeago }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Account details (editable name + company) -->
+    <div class="section">
+        <span class="lbl">Account details</span>
+        <div class="card pad">
+            <form method="POST" action="{{ url_for('profile') }}" class="detail-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="field-row">
+                    <label>Name<input class="field" name="name" value="{{ user.name or '' }}" maxlength="120"></label>
+                    <label>Company<input class="field" name="company_name" value="{{ user.company_name or '' }}" maxlength="120" placeholder="Your organization"></label>
+                </div>
+                <div class="field-row read">
+                    <div class="ro"><span class="ro-k">Email</span><span class="ro-v">{{ user.email }}</span></div>
+                    <div class="ro"><span class="ro-k">Role</span><span class="ro-v">{{ user.role|rolelabel }}</span></div>
+                    <div class="ro"><span class="ro-k">Sign-in method</span><span class="ro-v">{{ user.auth_provider }}</span></div>
+                </div>
+                <div class="detail-actions">
+                    <button type="submit" class="btn primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Usage summary -->
+    <div class="section">
+        <span class="lbl">API usage</span>
+        <div class="stat-grid">
+            <div class="stat"><span class="stat-k">Conversations</span><b class="stat-v">{{ "{:,}".format(conversations) }}</b></div>
+            <div class="stat"><span class="stat-k">Total tokens</span><b class="stat-v">{{ "{:,}".format(stats.tokens) }}</b></div>
+            <div class="stat"><span class="stat-k">Estimated cost</span><b class="stat-v accent">{{ stats.cost|usd }}</b></div>
+            <div class="stat"><span class="stat-k">Documents uploaded</span><b class="stat-v">{{ counts.documents }}</b></div>
+            <div class="stat"><span class="stat-k">Repositories connected</span><b class="stat-v">{{ counts.repos }}</b></div>
+            <div class="stat"><span class="stat-k">Workspaces</span><b class="stat-v">{{ counts.workspaces }}</b></div>
+        </div>
+        <a class="usage-link" href="{{ url_for('usage_view') }}">View detailed usage →</a>
+    </div>
+
+    <!-- Recent conversations -->
+    <div class="section">
+        <span class="lbl">Recent conversations</span>
+        <div class="card list-card">
+            {% for chat in recent %}
+            <a class="list-row" href="{{ url_for('chat_view', ws_id=chat.workspace_id, chat_id=chat.id) }}">
+                <span class="list-main">
+                    <span class="dot"></span>
+                    <span class="list-title">{{ chat.title }}</span>
+                    <span class="list-tag">{{ chat.workspace.name }}</span>
+                </span>
+                <span class="meta">{{ chat.messages|length }} message{{ "s" if chat.messages|length != 1 }}</span>
+                <span class="meta">{{ chat.updated_at|timeago }}</span>
+            </a>
+            {% else %}
+            <div class="empty-state"><p>No conversations yet — start one from a workspace.</p></div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="section">
+        <span class="lbl">Danger zone</span>
+        <div class="card pad danger-zone">
+            <div>
+                <b>Delete account</b>
+                <p class="muted">Permanently deletes your account, workspaces, knowledge, and chats. This cannot be undone.</p>
+            </div>
+            <button class="btn destructive" id="deleteAcctBtn">Delete account</button>
+        </div>
+    </div>
+</div>
+
+<dialog class="dlg" id="deleteAcctDialog">
+    <form method="POST" action="{{ url_for('delete_account') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2>Delete your account?</h2>
+        <p>This permanently removes your account and everything in it —
+           {{ counts.workspaces }} workspace{{ "s" if counts.workspaces != 1 }},
+           all knowledge, and every conversation. This cannot be undone.</p>
+        <div class="dlg-actions">
+            <button type="button" class="btn" id="deleteAcctCancel">Cancel</button>
+            <button type="submit" class="btn destructive">Delete my account</button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+document.getElementById("deleteAcctBtn").addEventListener("click", () => deleteAcctDialog.showModal());
+document.getElementById("deleteAcctCancel").addEventListener("click", () => deleteAcctDialog.close());
+</script>
+{% endblock %}

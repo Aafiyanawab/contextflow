@@ -1,33 +1,55 @@
 {% extends "base.html" %}
-{% block title %}Add knowledge — ContextFlow{% endblock %}
+{% block title %}Create Workspace — ContextFlow{% endblock %}
 
 {% block content %}
 <div class="connect-wrap">
     <div class="connect-intro">
         <h1>Create a workspace</h1>
-        <p class="sub">Choose a knowledge source. A workspace remembers everything
-        you add to it — every chat inside reuses that knowledge.</p>
+        <p class="sub">Name it and start chatting right away — connect a repository or
+        upload documents whenever you like. Knowledge is always optional.</p>
     </div>
+
+    <!-- Instant path: name → workspace → first chat, no setup required -->
+    <div class="card connect-card create-instant">
+        <form method="POST" action="{{ url_for('create_workspace_instant') }}" class="instant-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" class="field" name="name" maxlength="120"
+                   placeholder="Workspace name (optional)" autocomplete="off" autofocus>
+            <button type="submit" class="btn primary lg" style="justify-content:center">
+                Create Workspace
+            </button>
+        </form>
+        <p class="instant-note">Creates an empty workspace and opens your first chat instantly.</p>
+    </div>
+
+    <div class="or-divider"><span>or start with knowledge (optional)</span></div>
 
     <div class="src-choice">
         <div class="card connect-card">
-            <h2>GitHub repository</h2>
-            <p class="sub">Discovery scans the repo once and maps your stack —
-            cloud, IaC, CI/CD, language.</p>
+            <h2>🐙 Connect GitHub Repository</h2>
+            <p class="src-tag">Best for software repositories</p>
+            <p class="sub">Point us at a repository — we map your stack and index
+            its docs and code so every chat has your project in context.</p>
             <form class="connect-form" id="connectForm">
                 <input type="url" class="field" id="repoUrl"
                        placeholder="https://github.com/your-org/your-repo"
                        autocomplete="off" required>
                 <button type="submit" class="btn primary" id="scanBtn" style="justify-content:center">
-                    Scan repository
+                    Connect repository
                 </button>
             </form>
         </div>
 
         <div class="card connect-card">
-            <h2>Upload documents</h2>
-            <p class="sub">PDF, DOCX, TXT, or Markdown — up to 50 files,
-            10&nbsp;MB each. Folders supported.</p>
+            <h2>📄 Upload Knowledge</h2>
+            <div class="fmt-row" aria-label="Supported formats">
+                <span class="fmt">PDF</span>
+                <span class="fmt">DOCX</span>
+                <span class="fmt">TXT</span>
+                <span class="fmt">Markdown</span>
+            </div>
+            <p class="sub">Upload your documents — up to 50 files, 10&nbsp;MB each.
+            Folders supported.</p>
             <form class="connect-form" id="uploadForm">
                 <input type="text" class="field" id="wsName" maxlength="120"
                        placeholder="Workspace name (e.g. Study notes)" autocomplete="off">
@@ -117,7 +139,7 @@ function showError(message) {
     errorCard.classList.add("active");
     stepsBox.classList.remove("active");
     scanBtn.disabled = false;
-    scanBtn.textContent = "Scan repository";
+    scanBtn.textContent = "Connect repository";
     uploadBtn.disabled = false;
     uploadBtn.textContent = "Create workspace";
 }

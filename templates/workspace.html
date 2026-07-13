@@ -2,141 +2,130 @@
 {% block title %}{{ ws.name }} — ContextFlow{% endblock %}
 
 {% block content %}
-<div class="page">
+<div class="page ws-page">
     <div class="page-head">
         <div>
             <h1>{{ ws.name }}</h1>
             <div class="sub">
-                {% set gh = ws.github_source %}
-                {% if gh %}
-                <span class="mono">{{ gh.uri.replace('https://', '') }}</span>
-                · scanned <span id="scannedAgo">{{ gh.last_ingested_at|timeago }}</span>
-                {% else %}
                 {{ ws.sources|length }} knowledge source{{ "s" if ws.sources|length != 1 }}
-                {% endif %}
+                · {{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }}
             </div>
         </div>
         <div class="head-actions">
-            {% if ws.github_source %}<button class="btn" id="rescanBtn">↻ Rescan</button>{% endif %}
-            <button class="btn danger" id="disconnectBtn">Delete workspace</button>
-            <button class="btn primary" id="newChatBtn">＋ New chat</button>
+            <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}"
+                  class="inline-form js-newchat" data-ws-id="{{ ws.id }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn primary">＋ New Chat</button>
+            </form>
+            <div class="menu-wrap">
+                <button class="btn" id="addKnowledgeBtn" aria-haspopup="true" aria-expanded="false">＋ Add Knowledge ▾</button>
+                <div class="menu" id="addKnowledgeMenu" hidden>
+                    <button type="button" class="menu-item" id="menuUpload">
+                        <span class="menu-ico">📄</span>Upload Documents
+                    </button>
+                    <button type="button" class="menu-item" id="menuConnect">
+                        <span class="menu-ico">🐙</span>Connect Repository
+                    </button>
+                </div>
+            </div>
+            <button class="btn danger" id="deleteWsBtn">Delete workspace</button>
         </div>
     </div>
 
     <div class="error-card" id="pageError" role="alert"></div>
 
-    {% if ws.github_source %}
+    <!-- ── Knowledge (optional) ── -->
     <div class="section">
-        <span class="lbl">Discovered context — shared by every chat in this workspace</span>
-        <div class="ctx-grid">
-            {% for key, label, value in cells %}
-            <div class="card ctx-cell {% if not value %}empty{% endif %}">
-                <div class="k">{{ label }}</div>
-                <b>{{ value|ctxval if value else "Not detected" }}</b>
-            </div>
-            {% endfor %}
+        <div class="sec-head">
+            <span class="lbl">Knowledge</span>
+            <span class="meta">Optional — every chat works without it</span>
         </div>
-    </div>
-    {% endif %}
 
-    <div class="section">
-        <div class="card chat-table">
-            <div class="thead">
-                <b>Knowledge sources</b>
-                <span>
-                    <button class="btn small" id="addDocsBtn">＋ Add documents</button>
-                </span>
+        {% set repos = ws.sources|selectattr("type", "equalto", "github")|list %}
+        {% set uploads = ws.sources|selectattr("type", "equalto", "upload")|list %}
+
+        <!-- GitHub Repositories -->
+        <div class="ks-block">
+            <div class="ks-block-head">
+                <span class="ks-block-title">🐙 GitHub Repositories</span>
+                <button class="btn tiny" id="connectRepoBtn2">Connect repository</button>
             </div>
-            {% for src in ws.sources %}
-            <div class="src-row">
-                <span class="src-badge">{{ "GitHub" if src.type == "github" else "Documents" }}</span>
-                <span class="src-name">
-                    {{ src.uri.replace('https://', '') if src.uri else src.name }}
-                    {% if src.type == "upload" %}
-                    · {{ src.documents|length }} file{{ "s" if src.documents|length != 1 }}
-                    {% endif %}
-                </span>
-                <span class="meta">updated {{ src.last_ingested_at|timeago }}</span>
-                <form method="POST" action="{{ url_for('delete_source', ws_id=ws.id, src_id=src.id) }}"
-                      class="src-del" data-confirm>
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn small danger">Remove</button>
-                </form>
+            <div class="card list-card">
+                {% for src in repos %}
+                <div class="repo-row">
+                    <div class="repo-main">
+                        <span class="repo-name">{{ src.uri.replace('https://', '') if src.uri else src.name }}</span>
+                        <span class="repo-meta">Last synced {{ src.last_ingested_at|timeago }}</span>
+                    </div>
+                    <div class="repo-actions">
+                        <form method="POST" action="{{ url_for('rescan_workspace', ws_id=ws.id) }}" class="js-sync">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn tiny">Sync</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_source', ws_id=ws.id, src_id=src.id) }}"
+                              class="js-disconnect"
+                              data-confirm-msg="Disconnect this repository? Its indexed knowledge is removed — your chats are kept.">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn tiny danger">Disconnect</button>
+                        </form>
+                    </div>
+                </div>
+                {% else %}
+                <div class="ks-empty">No repository connected — connect one to give chats your project context.</div>
+                {% endfor %}
             </div>
-            {% for doc in src.documents[:12] %}
-            <div class="doc-row">
-                <span class="doc-name" title="{{ doc.filename }}">{{ doc.filename }}</span>
-                <span class="meta">{{ "{:,.0f}".format(doc.size_bytes / 1024) }} KB</span>
-                <span class="chip {{ doc.status }}">{{ doc.status }}</span>
-                {% if doc.error %}<span class="meta doc-err">{{ doc.error }}</span>{% endif %}
+        </div>
+
+        <!-- Documents -->
+        <div class="ks-block">
+            <div class="ks-block-head">
+                <span class="ks-block-title">📄 Documents</span>
+                <button class="btn tiny" id="uploadDocsBtn2">Upload documents</button>
             </div>
-            {% endfor %}
-            {% if src.documents|length > 12 %}
-            <div class="doc-row"><span class="meta">…and {{ src.documents|length - 12 }} more files indexed</span></div>
-            {% endif %}
-            {% else %}
-            <div class="empty-state"><p>No knowledge sources yet — add documents to get started.</p></div>
-            {% endfor %}
+            <div class="card list-card">
+                {% set dc = namespace(n=0) %}
+                {% for src in uploads %}
+                {% for doc in src.documents %}
+                {% set dc.n = dc.n + 1 %}
+                <div class="doc-row">
+                    <a class="doc-main" href="{{ url_for('view_document', ws_id=ws.id, doc_id=doc.id) }}" target="_blank" rel="noopener">
+                        <span class="doc-ico">📄</span>
+                        <span class="doc-name">{{ doc.filename }}</span>
+                        <span class="doc-size">{{ doc.size_bytes|filesizeformat }}</span>
+                    </a>
+                    <div class="doc-actions">
+                        <button type="button" class="btn tiny js-doc-rename"
+                                data-id="{{ doc.id }}" data-name="{{ doc.filename }}">Rename</button>
+                        <button type="button" class="btn tiny js-doc-replace" data-id="{{ doc.id }}">Replace</button>
+                        <form method="POST" action="{{ url_for('delete_document', ws_id=ws.id, doc_id=doc.id) }}"
+                              data-confirm="Delete “{{ doc.filename }}”?">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn tiny danger">Delete</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endfor %}
+                {% if dc.n == 0 %}
+                <div class="ks-empty">No documents yet — upload PDF, DOCX, TXT, or Markdown.</div>
+                {% endif %}
+            </div>
         </div>
         <input type="file" id="docsInput" multiple accept=".pdf,.docx,.txt,.md,.markdown" hidden>
+        <input type="file" id="replaceInput" accept=".pdf,.docx,.txt,.md,.markdown" hidden>
     </div>
 
-    {% if capsules %}
+    <!-- ── Recent chats ── -->
     <div class="section">
-        <span class="lbl">Knowledge capsules — organized automatically from your sources</span>
-        <div class="cap-grid">
-            {% for cap in capsules %}
-            <button class="card cap-card" data-cap="{{ loop.index0 }}">
-                <div class="cap-title">{{ cap.title }}
-                    {% if cap.status != "fresh" %}<span class="chip">updating</span>{% endif %}
-                </div>
-                <div class="cap-pills">
-                    {% for kw in cap.keywords[:5] %}<span class="pill">{{ kw }}</span>{% endfor %}
-                </div>
-                <div class="cap-meta">{{ cap.chunks }} chunks · {{ cap.files|length }} source{{ "s" if cap.files|length != 1 }}</div>
-            </button>
-            {% endfor %}
+        <div class="sec-head">
+            <span class="lbl">Recent chats</span>
+            <span class="meta">{{ ws.chats|length }} total</span>
         </div>
-    </div>
-
-    <dialog class="dlg cap-dlg" id="capsuleDialog">
-        <h2 id="capTitle"></h2>
-        <div class="cap-pills" id="capConcepts"></div>
-        <div class="cap-summary" id="capSummary"></div>
-        <div class="cap-foot" id="capFoot"></div>
-        <div class="dlg-actions">
-            <button type="button" class="btn" id="capClose">Close</button>
-        </div>
-    </dialog>
-    <script id="capData" type="application/json" nonce="{{ csp_nonce }}">{{ capsules|tojson }}</script>
-    {% endif %}
-
-    <div class="section">
-        <div class="card chat-table">
-            <div class="thead">
-                <b>Retrieval preview</b>
-                <span>see exactly which knowledge a question would pull in</span>
-            </div>
-            <form class="rp-form" id="rpForm">
-                <input type="text" class="field" id="rpQuery" maxlength="500"
-                       placeholder="Try a question, e.g. How does TCP congestion control work?"
-                       autocomplete="off">
-                <button type="submit" class="btn" id="rpBtn">Search</button>
-            </form>
-            <div id="rpResults"></div>
-        </div>
-    </div>
-
-    <div class="section">
-        <div class="card chat-table">
-            <div class="thead">
-                <b>Chats</b>
-                <span>{{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }} · sorted by activity</span>
-            </div>
+        <div class="card list-card">
             {% if ws.chats %}
                 {% for chat in ws.chats %}
-                <a class="chat-row" href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}">
-                    <span class="t"><span class="dot"></span><span>{{ chat.title }}</span></span>
+                <a class="list-row" href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}">
+                    <span class="list-main"><span class="dot"></span><span class="list-title">{{ chat.title }}</span></span>
                     <span class="meta">{{ chat.messages|length }} message{{ "s" if chat.messages|length != 1 }}</span>
                     <span class="meta">{{ chat.updated_at|timeago }}</span>
                 </a>
@@ -144,39 +133,56 @@
             {% else %}
                 <div class="empty-state">
                     <div class="big">No chats yet</div>
-                    <p>Every chat here automatically uses the context above —<br>
-                       no need to describe your stack in every question.</p>
-                    <button class="btn primary" id="startFirstChatBtn">＋ Start the first chat</button>
+                    <p>Every chat automatically understands this workspace's knowledge.</p>
+                    <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}"
+                          class="inline-form js-newchat" data-ws-id="{{ ws.id }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn primary">＋ Start the first chat</button>
+                    </form>
                 </div>
             {% endif %}
         </div>
     </div>
 </div>
 
-<dialog class="dlg" id="newChatDialog">
-    <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <h2>New chat in {{ ws.name }}</h2>
-        <p>This chat will automatically use the workspace's discovered context.</p>
-        <input class="field" name="title" placeholder="e.g. Deployment strategy"
-               maxlength="160" autocomplete="off" style="font-family:var(--font)">
+<!-- Connect Repository modal -->
+<dialog class="dlg" id="connectDialog">
+    <form id="connectForm">
+        <h2>Connect a GitHub repository</h2>
+        <p>We'll map the repository and index its docs and code into this workspace.</p>
+        <input type="url" class="field" id="repoUrl" style="font-family:var(--mono)"
+               placeholder="https://github.com/your-org/your-repo" autocomplete="off" required>
+        <div class="scan-steps" id="connectSteps" aria-live="polite"></div>
+        <div class="error-card" id="connectError" role="alert"></div>
         <div class="dlg-actions">
-            <button type="button" class="btn" id="newChatCancel">Cancel</button>
-            <button type="submit" class="btn primary">Create chat</button>
+            <button type="button" class="btn" id="connectCancel">Cancel</button>
+            <button type="submit" class="btn primary" id="connectBtn">Connect repository</button>
         </div>
     </form>
 </dialog>
 
-<dialog class="dlg" id="disconnectDialog">
+<dialog class="dlg" id="renameDocDialog">
+    <form id="renameDocForm" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2>Rename document</h2>
+        <input type="text" class="field" name="filename" id="renameDocInput" maxlength="300" required>
+        <div class="dlg-actions">
+            <button type="button" class="btn" id="renameDocCancel">Cancel</button>
+            <button type="submit" class="btn primary">Save</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="dlg" id="deleteWsDialog">
     <form method="POST" action="{{ url_for('delete_workspace', ws_id=ws.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <h2>Disconnect {{ ws.name }}?</h2>
-        <p>This permanently deletes the workspace, its discovered context, and
+        <h2>Delete {{ ws.name }}?</h2>
+        <p>This permanently deletes the workspace, its knowledge, and
            {% if ws.chats %}all {{ ws.chats|length }} chat{{ "s" if ws.chats|length != 1 }} inside it{% else %}any future chats{% endif %}.
-           The GitHub repository itself is not touched.</p>
+           {% if ws.github_source %}The GitHub repository itself is not touched.{% endif %}</p>
         <div class="dlg-actions">
-            <button type="button" class="btn" id="disconnectCancel">Cancel</button>
-            <button type="submit" class="btn destructive">Disconnect workspace</button>
+            <button type="button" class="btn" id="deleteWsCancel">Cancel</button>
+            <button type="submit" class="btn destructive">Delete workspace</button>
         </div>
     </form>
 </dialog>
@@ -185,131 +191,28 @@
 {% block scripts %}
 <script nonce="{{ csp_nonce }}">
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
-const rescanBtn = document.getElementById("rescanBtn");
 const pageError = document.getElementById("pageError");
 
-document.getElementById("newChatBtn").addEventListener("click", () => newChatDialog.showModal());
-document.getElementById("disconnectBtn").addEventListener("click", () => disconnectDialog.showModal());
-document.getElementById("newChatCancel").addEventListener("click", () => newChatDialog.close());
-document.getElementById("disconnectCancel").addEventListener("click", () => disconnectDialog.close());
-const startFirst = document.getElementById("startFirstChatBtn");
-if (startFirst) startFirst.addEventListener("click", () => newChatDialog.showModal());
-
-// Sidebar "+ New chat" links land here with #new-chat — open the dialog directly.
-if (location.hash === "#new-chat") {
-    newChatDialog.showModal();
-    history.replaceState(null, "", location.pathname);
-}
-
-if (rescanBtn) rescanBtn.addEventListener("click", async () => {
-    pageError.classList.remove("active");
-    rescanBtn.disabled = true;
-    rescanBtn.innerHTML = '<span class="spinner"></span> Rescanning…';
-    try {
-        const res = await fetch("{{ url_for('rescan_workspace', ws_id=ws.id) }}", {
-            method: "POST",
-            headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
-        });
-        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
-        const data = await res.json();
-        if (data.ok) { location.reload(); return; }
-        pageError.textContent = data.error || "Rescan failed.";
-    } catch {
-        pageError.textContent = "Could not reach the server.";
-    }
-    pageError.classList.add("active");
-    rescanBtn.disabled = false;
-    rescanBtn.innerHTML = "↻ Rescan";
+/* ── Add Knowledge dropdown ── */
+const addBtn = document.getElementById("addKnowledgeBtn");
+const addMenu = document.getElementById("addKnowledgeMenu");
+function closeMenu() { addMenu.hidden = true; addBtn.setAttribute("aria-expanded", "false"); }
+addBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    addMenu.hidden = !addMenu.hidden;
+    addBtn.setAttribute("aria-expanded", String(!addMenu.hidden));
 });
+document.addEventListener("click", closeMenu);
+addMenu.addEventListener("click", (e) => e.stopPropagation());
 
-/* ── Capsule detail dialog ── */
-const capDataEl = document.getElementById("capData");
-if (capDataEl) {
-    const CAPS = JSON.parse(capDataEl.textContent);
-    const capDlg = document.getElementById("capsuleDialog");
-    document.getElementById("capClose").addEventListener("click", () => capDlg.close());
-    document.querySelectorAll(".cap-card").forEach(card => {
-        card.addEventListener("click", () => {
-            const cap = CAPS[Number(card.dataset.cap)];
-            document.getElementById("capTitle").textContent = cap.title;
-            const conc = document.getElementById("capConcepts");
-            conc.innerHTML = "";
-            for (const c of cap.concepts) {
-                const s = document.createElement("span");
-                s.className = "pill"; s.textContent = c; conc.appendChild(s);
-            }
-            document.getElementById("capSummary").textContent =
-                cap.summary || "Summary is being generated — check back after the next ingestion.";
-            const foot = document.getElementById("capFoot");
-            foot.textContent = "Sources: " + cap.files.join(", ")
-                + (cap.related.length ? "  ·  Related: " + cap.related.join(", ") : "")
-                + "  ·  " + cap.tokens + " tokens · updated " + cap.updated;
-            capDlg.showModal();
-        });
-    });
-}
-
-/* ── Retrieval preview ── */
-const rpForm = document.getElementById("rpForm");
-const rpResults = document.getElementById("rpResults");
-const rpBtn = document.getElementById("rpBtn");
-rpForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const query = document.getElementById("rpQuery").value.trim();
-    if (!query) return;
-    rpBtn.disabled = true;
-    rpResults.innerHTML = '<div class="rp-note"><span class="spinner"></span> Searching…</div>';
-    try {
-        const res = await fetch("{{ url_for('search_workspace', ws_id=ws.id) }}", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch",
-                       "X-CSRF-Token": CSRF_TOKEN },
-            body: JSON.stringify({ query }),
-        });
-        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
-        const data = await res.json();
-        rpResults.innerHTML = "";
-        if (data.error) {
-            rpResults.innerHTML = '<div class="rp-note err"></div>';
-            rpResults.firstChild.textContent = data.error;
-        } else if (!data.results.length) {
-            rpResults.innerHTML = '<div class="rp-note">No indexed knowledge matches yet — add documents above.</div>';
-        } else {
-            const head = document.createElement("div");
-            head.className = "rp-note";
-            head.textContent = data.results.length + " chunks · "
-                + data.total_tokens.toLocaleString() + " tokens (budget "
-                + data.budget.toLocaleString() + ")";
-            rpResults.appendChild(head);
-            for (const r of data.results) {
-                const row = document.createElement("div");
-                row.className = "rp-hit";
-                const where = r.filename + (r.page ? " · p." + r.page : "")
-                    + (r.headings.length ? " · " + r.headings.join(" › ") : "");
-                row.innerHTML = '<div class="rp-meta"><span class="rp-src"></span>'
-                    + '<span class="meta"></span></div><div class="rp-text"></div>';
-                row.querySelector(".rp-src").textContent = where;
-                row.querySelector(".meta").textContent =
-                    "score " + r.score + " · " + r.tokens + " tok";
-                row.querySelector(".rp-text").textContent = r.snippet + "…";
-                rpResults.appendChild(row);
-            }
-        }
-    } catch {
-        rpResults.innerHTML = '<div class="rp-note err">Could not reach the server.</div>';
-    }
-    rpBtn.disabled = false;
-});
-
-/* ── Add documents to this workspace ── */
-const addDocsBtn = document.getElementById("addDocsBtn");
+/* ── Upload documents ── */
 const docsInput = document.getElementById("docsInput");
-addDocsBtn.addEventListener("click", () => docsInput.click());
+document.getElementById("menuUpload").addEventListener("click", () => { closeMenu(); docsInput.click(); });
+const emptyAdd = document.getElementById("emptyAddBtn");
+if (emptyAdd) emptyAdd.addEventListener("click", () => docsInput.click());
 docsInput.addEventListener("change", async () => {
     if (!docsInput.files.length) return;
     pageError.classList.remove("active");
-    addDocsBtn.disabled = true;
-    addDocsBtn.innerHTML = '<span class="spinner"></span> Uploading…';
     const fd = new FormData();
     for (const f of docsInput.files) fd.append("files", f, f.name);
     try {
@@ -323,17 +226,180 @@ docsInput.addEventListener("change", async () => {
         if (ct.includes("application/json")) {
             const data = await res.json();
             pageError.textContent = data.error || "Upload failed.";
-        } else {
-            await res.text();  // drain the progress stream
-            location.reload();
-            return;
-        }
+            pageError.classList.add("active");
+        } else { await res.text(); location.reload(); }
     } catch {
         pageError.textContent = "Could not reach the server.";
+        pageError.classList.add("active");
     }
-    pageError.classList.add("active");
-    addDocsBtn.disabled = false;
-    addDocsBtn.innerHTML = "＋ Add documents";
 });
+
+/* ── Connect repository ── */
+const connectDialog = document.getElementById("connectDialog");
+const connectForm = document.getElementById("connectForm");
+const connectBtn = document.getElementById("connectBtn");
+const connectSteps = document.getElementById("connectSteps");
+const connectError = document.getElementById("connectError");
+document.getElementById("menuConnect").addEventListener("click", () => { closeMenu(); connectDialog.showModal(); });
+document.getElementById("connectCancel").addEventListener("click", () => connectDialog.close());
+connectForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const repoUrl = document.getElementById("repoUrl").value.trim();
+    if (!repoUrl) return;
+    connectError.classList.remove("active");
+    connectBtn.disabled = true;
+    connectBtn.innerHTML = '<span class="spinner"></span> Connecting…';
+    connectSteps.classList.add("active");
+    connectSteps.innerHTML = '<div class="step running"><span class="mark-cell"><span class="spinner"></span></span><span class="name">Scanning repository…</span></div>';
+    try {
+        const res = await fetch("{{ url_for('connect_source', ws_id=ws.id) }}", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+            body: JSON.stringify({ repo_url: repoUrl }),
+        });
+        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+            const data = await res.json();
+            connectError.textContent = data.error || "Connect failed.";
+            connectError.classList.add("active");
+            connectBtn.disabled = false; connectBtn.textContent = "Connect repository";
+            return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n"); buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+                if (ev.type === "step") {
+                    connectSteps.innerHTML = '<div class="step running"><span class="mark-cell"><span class="spinner"></span></span><span class="name"></span><span class="detail"></span></div>';
+                    connectSteps.querySelector(".name").textContent = ev.step;
+                    connectSteps.querySelector(".detail").textContent = ev.detail || "";
+                } else if (ev.type === "error") {
+                    connectError.textContent = ev.message; connectError.classList.add("active");
+                    connectBtn.disabled = false; connectBtn.textContent = "Connect repository";
+                    connectSteps.classList.remove("active");
+                    return;
+                } else if (ev.type === "done") { window.location = ev.redirect; return; }
+            }
+        }
+    } catch {
+        connectError.textContent = "Could not reach the server."; connectError.classList.add("active");
+        connectBtn.disabled = false; connectBtn.textContent = "Connect repository";
+    }
+});
+
+/* ── Secondary triggers (per-block buttons) ── */
+const connectRepoBtn2 = document.getElementById("connectRepoBtn2");
+if (connectRepoBtn2) connectRepoBtn2.addEventListener("click", () => connectDialog.showModal());
+const uploadDocsBtn2 = document.getElementById("uploadDocsBtn2");
+if (uploadDocsBtn2) uploadDocsBtn2.addEventListener("click", () => docsInput.click());
+
+/* ── Sync repository (feedback while rescan runs) ── */
+document.querySelectorAll(".js-sync").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector("button");
+        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Syncing…';
+        try {
+            const res = await fetch(form.action, {
+                method: "POST",
+                headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+                body: new URLSearchParams({ csrf_token: CSRF_TOKEN }),
+            });
+            if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+            location.reload();
+        } catch {
+            btn.disabled = false; btn.textContent = "Sync";
+            pageError.textContent = "Could not reach the server."; pageError.classList.add("active");
+        }
+    });
+});
+
+/* ── Disconnect repository ── */
+// Fetch-based (like Sync) so a failed disconnect is never silent: success
+// reloads with the repo gone; a session/CSRF problem shows a clear message
+// instead of a blank redirect. Chats are never touched by this action.
+document.querySelectorAll(".js-disconnect").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (form.dataset.confirmMsg && !window.confirm(form.dataset.confirmMsg)) return;
+        const btn = form.querySelector("button");
+        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Disconnecting…';
+        pageError.classList.remove("active");
+        try {
+            const res = await fetch(form.action, {
+                method: "POST",
+                headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+                body: new URLSearchParams({ csrf_token: CSRF_TOKEN }),
+            });
+            if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+            if (!res.ok) {
+                btn.disabled = false; btn.textContent = "Disconnect";
+                pageError.textContent = res.status === 403
+                    ? "Your session expired. Refresh the page and try again."
+                    : "Could not disconnect the repository. Please try again.";
+                pageError.classList.add("active");
+                return;
+            }
+            location.reload();  // repo removed; chats and history stay
+        } catch {
+            btn.disabled = false; btn.textContent = "Disconnect";
+            pageError.textContent = "Could not reach the server.";
+            pageError.classList.add("active");
+        }
+    });
+});
+
+/* ── Rename document ── */
+const renameDocDialog = document.getElementById("renameDocDialog");
+const renameDocForm = document.getElementById("renameDocForm");
+const renameDocInput = document.getElementById("renameDocInput");
+document.querySelectorAll(".js-doc-rename").forEach((btn) => {
+    btn.addEventListener("click", () => {
+        renameDocForm.action = "/w/{{ ws.id }}/documents/" + btn.dataset.id + "/rename";
+        renameDocInput.value = btn.dataset.name;
+        renameDocDialog.showModal();
+        renameDocInput.focus();
+    });
+});
+document.getElementById("renameDocCancel").addEventListener("click", () => renameDocDialog.close());
+
+/* ── Replace document ── */
+const replaceInput = document.getElementById("replaceInput");
+let replaceDocId = null;
+document.querySelectorAll(".js-doc-replace").forEach((btn) => {
+    btn.addEventListener("click", () => { replaceDocId = btn.dataset.id; replaceInput.click(); });
+});
+replaceInput.addEventListener("change", async () => {
+    if (!replaceInput.files.length || !replaceDocId) return;
+    pageError.classList.remove("active");
+    const fd = new FormData();
+    fd.append("files", replaceInput.files[0], replaceInput.files[0].name);
+    try {
+        const res = await fetch("/w/{{ ws.id }}/documents/" + replaceDocId + "/replace", {
+            method: "POST",
+            headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF_TOKEN },
+            body: fd,
+        });
+        if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+        const data = await res.json().catch(() => ({}));
+        if (data.error) { pageError.textContent = data.error; pageError.classList.add("active"); }
+        else location.reload();
+    } catch {
+        pageError.textContent = "Could not reach the server."; pageError.classList.add("active");
+    }
+    replaceInput.value = "";
+});
+
+/* ── Delete workspace ── */
+document.getElementById("deleteWsBtn").addEventListener("click", () => deleteWsDialog.showModal());
+document.getElementById("deleteWsCancel").addEventListener("click", () => deleteWsDialog.close());
 </script>
 {% endblock %}

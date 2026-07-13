@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Access denied — ContextFlow{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="err-page">
+        <div class="err-code">403</div>
+        <h1>Admins only</h1>
+        <p>Your account doesn't have access to this area. If you believe this
+        is a mistake, ask an administrator to grant you the admin role.</p>
+        <a class="btn primary" href="{{ url_for('index') }}">Back to your workspace</a>
+    </div>
+</div>
+{% endblock %}

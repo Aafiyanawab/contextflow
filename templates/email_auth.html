@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ "Create your account" if mode == "signup" else "Sign in" }} — ContextFlow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="login-body">
+
+<main class="login-wrap">
+    <div class="card login-card">
+        <a class="login-back" href="{{ url_for('auth.login', next=next_url) }}">← All sign-in options</a>
+        <h1>{{ "Create your account" if mode == "signup" else "Sign in with email" }}</h1>
+        <p class="login-sub">
+            {{ "Use an email and password — no social account required."
+               if mode == "signup"
+               else "Welcome back. Enter your email and password." }}
+        </p>
+
+        {% if error %}
+        <div class="error-card active" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <form class="email-form" method="POST"
+              action="{{ url_for('auth.signup' if mode == 'signup' else 'auth.login_email', next=next_url) }}">
+            {% if mode == "signup" %}
+            <label for="name">Name</label>
+            <input class="field" type="text" id="name" name="name"
+                   maxlength="120" autocomplete="name" placeholder="Your name">
+            {% endif %}
+            <label for="email">Email</label>
+            <input class="field" type="email" id="email" name="email" required
+                   autocomplete="email" placeholder="you@example.com" autofocus>
+            <label for="password">Password</label>
+            <input class="field" type="password" id="password" name="password" required
+                   autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
+                   minlength="{{ 8 if mode == 'signup' else 1 }}"
+                   placeholder="{{ 'At least 8 characters' if mode == 'signup' else 'Your password' }}">
+            <button class="btn primary" type="submit" style="justify-content:center; margin-top:4px">
+                {{ "Create account" if mode == "signup" else "Sign in" }}
+            </button>
+        </form>
+
+        <p class="login-switch">
+            {% if mode == "signup" %}
+            Already have an account?
+            <a href="{{ url_for('auth.login_email', next=next_url) }}">Sign in</a>
+            {% else %}
+            New to ContextFlow?
+            <a href="{{ url_for('auth.signup', next=next_url) }}">Create an account</a>
+            {% endif %}
+        </p>
+    </div>
+    <p class="login-foot">ContextFlow · Context Engineering Platform</p>
+</main>
+
+</body>
+</html>

@@ -1,0 +1,98 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Companies{% endblock %}
+{% block admin_sub %}{{ rows|length }} compan{{ "ies" if rows|length != 1 else "y" }} · {{ unassigned }} unassigned user{{ "s" if unassigned != 1 }}.{% endblock %}
+
+{% block admin_body %}
+<div class="section">
+    <span class="lbl">Add a company</span>
+    <div class="card pad">
+        <form method="POST" action="{{ url_for('admin_create_company') }}" class="detail-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="field-row">
+                <label style="flex:1">Company name<input class="field" name="name" maxlength="120" placeholder="Acme Inc." autocomplete="off" required></label>
+                <button type="submit" class="btn primary" style="align-self:flex-end">Create company</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="section">
+    <span class="lbl">All companies</span>
+    <div class="card tbl-card">
+        <div class="tbl-scroll">
+        <table class="tbl tbl-sticky">
+            <thead><tr>
+                <th>Company</th><th>Admin</th>
+                <th class="num">Members</th><th class="num">Workspaces</th>
+                <th class="num">Docs</th><th class="num">Repos</th>
+                <th class="num">Convos</th><th class="num">Storage</th>
+                <th class="num">Tokens</th><th class="num">Est. cost</th>
+                <th class="num">Created</th><th class="act">Actions</th>
+            </tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td><a class="tbl-user" href="{{ url_for('admin_company_detail', company_id=r.c.id) }}"><span class="tbl-name">{{ r.c.name }}</span></a></td>
+                    <td>{% if r.admin %}<span class="meta">{{ r.admin.email }}</span>{% else %}<span class="pill-muted">None</span>{% endif %}</td>
+                    <td class="num">{{ r.members }}</td>
+                    <td class="num">{{ r.workspaces }}</td>
+                    <td class="num">{{ r.documents }}</td>
+                    <td class="num">{{ r.repositories }}</td>
+                    <td class="num">{{ r.conversations }}</td>
+                    <td class="num meta">{{ r.storage|filesizeformat }}</td>
+                    <td class="num">{{ "{:,}".format(r.tokens) }}</td>
+                    <td class="num">{{ r.cost|usd }}</td>
+                    <td class="num meta">{{ r.c.created_at|timeago }}</td>
+                    <td class="act">
+                        <div class="row-actions">
+                            <a class="btn tiny" href="{{ url_for('admin_company_detail', company_id=r.c.id) }}">View</a>
+                            <a class="btn tiny" href="{{ url_for('admin_company_detail', company_id=r.c.id) }}#edit">Edit</a>
+                            <button type="button" class="btn tiny danger js-del-company"
+                                    data-name="{{ r.c.name }}" data-members="{{ r.members }}"
+                                    data-url="{{ url_for('admin_delete_company', company_id=r.c.id) }}">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="12"><div class="empty-state"><p>No companies yet. Create one above, then assign users from a user's profile.</p></div></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    <p class="usage-link" style="cursor:default">Assign users to a company from <b>Users → (a user) → Role &amp; access</b>.</p>
+</div>
+
+<dialog class="dlg" id="delCompanyDialog">
+    <form method="POST" id="delCompanyForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2>Delete company</h2>
+        <p class="dlg-line">Company: <b id="delCompanyName"></b></p>
+        <div class="warn-card" id="delCompanyWarn" role="alert"></div>
+        <div class="dlg-actions">
+            <button type="button" class="btn" id="delCompanyCancel">Cancel</button>
+            <button type="submit" class="btn danger">Delete company</button>
+        </div>
+    </form>
+</dialog>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+    const dlg = document.getElementById("delCompanyDialog");
+    const form = document.getElementById("delCompanyForm");
+    document.querySelectorAll(".js-del-company").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            form.action = btn.dataset.url;
+            document.getElementById("delCompanyName").textContent = btn.dataset.name;
+            const n = parseInt(btn.dataset.members, 10) || 0;
+            document.getElementById("delCompanyWarn").innerHTML =
+                "Deleting a company is <b>permanent</b>. " + (n
+                  ? n + " user(s) will be moved to <b>Unassigned</b> — their workspaces, knowledge and chats are kept."
+                  : "This company has no members.");
+            dlg.showModal();
+        });
+    });
+    document.getElementById("delCompanyCancel").addEventListener("click", () => dlg.close());
+})();
+</script>
+{% endblock %}

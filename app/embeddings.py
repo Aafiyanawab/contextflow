@@ -12,7 +12,7 @@ from openai import OpenAI
 
 from app.config import (OPENAI_API_KEY, EMBEDDING_MODEL,
                         EMBEDDING_DIMENSIONS)
-from app.models import Chunk
+from app.models import Chunk, CapsuleChunk
 
 _client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -43,6 +43,16 @@ def embed_texts(texts):
 
 def embed_query(text):
     return embed_texts([text])[0]
+
+
+def capsule_chunk_ids(capsule_ids):
+    """The union of chunk ids belonging to the given capsules — the
+    allowlist scoped retrieval searches within."""
+    if not capsule_ids:
+        return []
+    rows = (CapsuleChunk.query.with_entities(CapsuleChunk.chunk_id)
+            .filter(CapsuleChunk.capsule_id.in_(list(capsule_ids))).all())
+    return [r.chunk_id for r in rows]
 
 
 def search(workspace_id, query_vec, k=8, chunk_ids=None, token_budget=None):

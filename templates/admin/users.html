@@ -1,0 +1,80 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Users{% endblock %}
+{% block admin_sub %}{{ rows|length }} account{{ "s" if rows|length != 1 }} · {{ g.user.is_super_admin and "platform-wide" or "your company" }}.{% endblock %}
+
+{% block admin_body %}
+<form class="admin-search" method="GET" action="{{ url_for('admin_users') }}">
+    <input type="search" class="field" name="q" value="{{ search }}"
+           placeholder="Search by name or email…" autocomplete="off">
+    <button class="btn" type="submit">Search</button>
+    {% if search %}<a class="btn ghost" href="{{ url_for('admin_users') }}">Clear</a>{% endif %}
+</form>
+
+<div class="card tbl-card">
+    <div class="tbl-scroll">
+    <table class="tbl">
+        <thead>
+            <tr>
+                <th>User</th><th>Company</th><th>Role</th>
+                <th class="num">Workspaces</th><th class="num">Chats</th>
+                <th class="num">Tokens</th><th class="num">Est. cost</th><th class="act">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr class="{% if not r.u.active %}row-off{% endif %}">
+                <td>
+                    <a class="tbl-user" href="{{ url_for('admin_user_detail', user_id=r.u.id) }}">
+                        <span class="tbl-name">{{ r.u.name or "—" }}</span>
+                        <span class="tbl-email">{{ r.u.email }}</span>
+                    </a>
+                    {% if not r.u.active %}<span class="tag-row"><span class="role-badge off sm">Deactivated</span></span>{% endif %}
+                </td>
+                <td class="meta">{{ r.company or "—" }}</td>
+                <td>
+                    <span class="role-badge {% if r.u.is_admin %}admin {% endif %}sm">{{ r.u.role|rolelabel }}</span>
+                </td>
+                <td class="num">{{ r.workspaces }}</td>
+                <td class="num">{{ "{:,}".format(r.conversations) }}</td>
+                <td class="num">{{ "{:,}".format(r.tokens) }}</td>
+                <td class="num">{{ r.cost|usd }}</td>
+                <td class="act">
+                    {% if r.u.id != g.user.id and not (g.user.is_company_admin and r.u.is_super_admin) %}
+                    <div class="act-row">
+                        {% if assignable %}
+                        <form method="POST" action="{{ url_for('admin_set_role', user_id=r.u.id) }}" class="role-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <select name="role" class="mini-select">
+                                {% for role in assignable %}
+                                <option value="{{ role }}" {% if role == r.u.role %}selected{% endif %}>{{ role|rolelabel }}</option>
+                                {% endfor %}
+                            </select>
+                            <button class="btn tiny" type="submit">Set</button>
+                        </form>
+                        {% endif %}
+                        {% if r.u.active %}
+                        <form method="POST" action="{{ url_for('admin_deactivate_user', user_id=r.u.id) }}"
+                              data-confirm="Deactivate {{ r.u.email }}? They will be signed out and unable to log in.">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button class="btn tiny danger" type="submit">Deactivate</button>
+                        </form>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('admin_activate_user', user_id=r.u.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button class="btn tiny" type="submit">Activate</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <span class="meta">{{ "You" if r.u.id == g.user.id else "—" }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8"><div class="empty-state"><p>No users match “{{ search }}”.</p></div></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Overview{% endblock %}
+{% block admin_sub %}{{ scope }} — usage across {{ g.user.is_super_admin and "every account" or "your company" }}.{% endblock %}
+
+{% block admin_body %}
+<div class="lbl" style="display:block;margin:22px 0 9px">Platform</div>
+<div class="stat-grid">
+    <div class="stat">
+        <span class="stat-ico">◔</span>
+        <span class="stat-k">Total users</span>
+        <b class="stat-v">{{ "{:,}".format(totals.users) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">◉</span>
+        <span class="stat-k">Active users <span class="stat-note">30d</span></span>
+        <b class="stat-v">{{ "{:,}".format(totals.active_users) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">▦</span>
+        <span class="stat-k">Workspaces</span>
+        <b class="stat-v">{{ "{:,}".format(totals.workspaces) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">▤</span>
+        <span class="stat-k">Conversations</span>
+        <b class="stat-v">{{ "{:,}".format(totals.conversations) }}</b>
+    </div>
+</div>
+
+<div class="lbl" style="display:block;margin:22px 0 9px">Tokens &amp; cost</div>
+<div class="stat-grid">
+    <div class="stat">
+        <span class="stat-ico">↗</span>
+        <span class="stat-k">Prompt tokens</span>
+        <b class="stat-v">{{ "{:,}".format(totals.stats.tokens_in) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">↙</span>
+        <span class="stat-k">Completion tokens</span>
+        <b class="stat-v">{{ "{:,}".format(totals.stats.tokens_out) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">Σ</span>
+        <span class="stat-k">Total tokens</span>
+        <b class="stat-v">{{ "{:,}".format(totals.stats.tokens) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">$</span>
+        <span class="stat-k">Estimated API cost</span>
+        <b class="stat-v accent">{{ totals.stats.cost|usd }}</b>
+    </div>
+</div>
+
+<div class="lbl" style="display:block;margin:22px 0 9px">Knowledge</div>
+<div class="stat-grid">
+    {% if g.user.is_super_admin %}
+    <div class="stat">
+        <span class="stat-ico">◫</span>
+        <span class="stat-k">Companies</span>
+        <b class="stat-v">{{ "{:,}".format(totals.companies) }}</b>
+    </div>
+    {% endif %}
+    <div class="stat">
+        <span class="stat-ico">✓</span>
+        <span class="stat-k">Avg context savings</span>
+        <b class="stat-v good">{{ totals.stats.context_reduction }}%</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">⧉</span>
+        <span class="stat-k">Knowledge sources</span>
+        <b class="stat-v">{{ "{:,}".format(totals.sources) }}</b>
+    </div>
+    <div class="stat">
+        <span class="stat-ico">✦</span>
+        <span class="stat-k">Knowledge capsules</span>
+        <b class="stat-v">{{ "{:,}".format(totals.capsules) }}</b>
+    </div>
+</div>
+
+<div class="admin-links">
+    <a class="card nav-card" href="{{ url_for('admin_users') }}">
+        <b>Users →</b><span>Search, view, deactivate, and manage roles.</span>
+    </a>
+    <a class="card nav-card" href="{{ url_for('admin_workspaces') }}">
+        <b>Workspace analytics →</b><span>Per-workspace usage, cost, and savings.</span>
+    </a>
+    <a class="card nav-card" href="{{ url_for('admin_analytics') }}">
+        <b>Platform analytics →</b><span>Daily & monthly trends, most active accounts.</span>
+    </a>
+</div>
+{% endblock %}

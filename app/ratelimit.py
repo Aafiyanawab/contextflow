@@ -25,6 +25,24 @@ _hits = defaultdict(deque)  # (user_id, bucket) -> monotonic times of recent hit
 DEFAULT_MESSAGE = "You're sending requests too quickly. Wait a moment and try again."
 
 
+def throttle(bucket, key, limit, per_seconds):
+    """Sliding-window check for an arbitrary key (IP, email) — the
+    anonymous-endpoint counterpart to @rate_limit, which needs g.user.
+    Records the hit and returns retry_after seconds if over the limit,
+    else None. Used to blunt brute-force / credential stuffing on the
+    login and signup routes."""
+    full_key = (bucket, key)
+    now = time.monotonic()
+    with _lock:
+        q = _hits[full_key]
+        while q and q[0] <= now - per_seconds:
+            q.popleft()
+        if len(q) >= limit:
+            return max(1, int(q[0] + per_seconds - now) + 1)
+        q.append(now)
+    return None
+
+
 def rate_limit(bucket, limit, per_seconds, message=DEFAULT_MESSAGE):
     """At most `limit` requests per `per_seconds` window, per user per
     bucket. Buckets are shared across routes that share a name — scan

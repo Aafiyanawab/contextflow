@@ -1,0 +1,34 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}System{% endblock %}
+{% block admin_sub %}Health, configuration, and LLM provider status.{% endblock %}
+
+{% block admin_body %}
+<div class="stat-grid">
+    <div class="stat"><span class="stat-k">Database</span><b class="stat-v {{ 'good' if health.db_ok else '' }}">{{ "Healthy" if health.db_ok else "Down" }}</b></div>
+    <div class="stat"><span class="stat-k">Uptime</span><b class="stat-v">{{ health.uptime }}</b></div>
+    <div class="stat"><span class="stat-k">Users</span><b class="stat-v">{{ "{:,}".format(health.users) }}</b></div>
+    <div class="stat"><span class="stat-k">Workspaces</span><b class="stat-v">{{ "{:,}".format(health.workspaces) }}</b></div>
+    <div class="stat"><span class="stat-k">Messages</span><b class="stat-v">{{ "{:,}".format(health.messages) }}</b></div>
+</div>
+
+<div class="section">
+    <span class="lbl">Provider &amp; login configuration</span>
+    <div class="card tbl-card">
+        <div class="tbl-scroll">
+        <table class="tbl">
+            <thead><tr><th>Setting</th><th>Value</th><th class="act">Status</th></tr></thead>
+            <tbody>
+                {% for label, value, ok in config %}
+                <tr>
+                    <td><span class="tbl-name">{{ label }}</span></td>
+                    <td class="meta">{{ value }}</td>
+                    <td class="act"><span class="role-badge {{ 'good' if ok else 'off' }} sm">{{ "OK" if ok else "Off" }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    <p class="usage-link" style="cursor:default">API keys and provider secrets are configured via environment variables and never displayed.</p>
+</div>
+{% endblock %}

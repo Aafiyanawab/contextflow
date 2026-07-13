@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ContextFlow — AI workspace that understands your company's knowledge</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="landing-body">
+
+<header class="lp-nav">
+    <a class="lp-logo" href="{{ url_for('index') }}">
+        <span class="s-mark s-mark-lg">
+            <svg width="17" height="17" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M2 6h3M7 6h3M5 6a1.4 1.4 0 1 0 0-.01M2 2.8h2.4M2 9.2h2.4"
+                      stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+                <circle cx="9.6" cy="2.8" r="1.1" fill="#fff"/>
+                <circle cx="9.6" cy="9.2" r="1.1" fill="#fff"/>
+            </svg>
+        </span>
+        ContextFlow
+    </a>
+    <nav class="lp-nav-links">
+        <a class="lp-link" href="#features">Features</a>
+        <a class="lp-link" href="#how">How it works</a>
+        <a class="lp-link" href="#benefits">Benefits</a>
+    </nav>
+    <div class="lp-nav-right">
+        <a class="lp-link" href="{{ url_for('auth.login') }}">Login</a>
+        <a class="btn primary" href="{{ url_for('auth.login') }}">Get Started</a>
+    </div>
+</header>
+
+<main class="lp-hero">
+    <span class="lp-eyebrow">Context Engineering Platform</span>
+    <h1 class="lp-title">AI Workspace that understands<br>your company's knowledge.</h1>
+    <p class="lp-desc">
+        Connect documents or repositories once. Every conversation
+        automatically understands your organization — no pasting context,
+        no re-explaining, no lost knowledge.
+    </p>
+    <div class="lp-cta">
+        <a class="btn primary lg" href="{{ url_for('auth.login') }}">Get Started</a>
+        <a class="btn lg" href="#how">See how it works</a>
+    </div>
+</main>
+
+<!-- Features -->
+<section class="lp-band">
+<div class="lp-section" id="features">
+    <div class="lp-section-head">
+        <h2>Everything your team needs</h2>
+        <p>Bring your knowledge in once — ContextFlow handles the rest.</p>
+    </div>
+    <div class="lp-features">
+        <div class="lp-feature"><span class="lp-ico">🔗</span><h3>Connect once</h3>
+            <p>Link GitHub repositories or upload PDF, DOCX, TXT, and Markdown. Your knowledge lives in one place.</p></div>
+        <div class="lp-feature"><span class="lp-ico">🧠</span><h3>Understands your org</h3>
+            <p>Every conversation automatically draws on your company's documents and code — no re-explaining.</p></div>
+        <div class="lp-feature"><span class="lp-ico">✨</span><h3>Only what matters</h3>
+            <p>Answers pull in just the relevant context, so responses stay fast, focused, and accurate.</p></div>
+        <div class="lp-feature"><span class="lp-ico">🔒</span><h3>Private &amp; secure</h3>
+            <p>Role-based access keeps every workspace scoped to the people who should see it.</p></div>
+        <div class="lp-feature"><span class="lp-ico">👥</span><h3>Built for teams</h3>
+            <p>Company and workspace roles let admins manage people and access from one dashboard.</p></div>
+        <div class="lp-feature"><span class="lp-ico">📊</span><h3>Usage you can see</h3>
+            <p>Track conversations, tokens, and estimated cost per person and across your organization.</p></div>
+    </div>
+</div>
+</section>
+
+<!-- How it works -->
+<section class="lp-section" id="how">
+    <div class="lp-section-head">
+        <h2>How ContextFlow works</h2>
+        <p>From scattered knowledge to grounded answers in three steps.</p>
+    </div>
+    <div class="lp-steps">
+        <div class="lp-step">
+            <span class="lp-step-n">1</span>
+            <h3>Connect your knowledge</h3>
+            <p>Upload documents or connect a GitHub repository. ContextFlow ingests and organizes everything automatically.</p>
+        </div>
+        <div class="lp-step">
+            <span class="lp-step-n">2</span>
+            <h3>It builds understanding</h3>
+            <p>Your knowledge is indexed and grouped into topics behind the scenes — no configuration, no manual tagging.</p>
+        </div>
+        <div class="lp-step">
+            <span class="lp-step-n">3</span>
+            <h3>Ask anything</h3>
+            <p>Every chat automatically pulls in the right context and answers grounded in your organization's knowledge.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Architecture illustration -->
+<section class="lp-band">
+<div class="lp-section" id="architecture">
+    <div class="lp-section-head">
+        <h2>How it fits together</h2>
+        <p>One engine between your knowledge and every conversation.</p>
+    </div>
+    <div class="arch">
+        <div class="arch-col">
+            <div class="arch-node"><span class="arch-ico">📄</span><b>Documents</b><span>PDF · DOCX · TXT · MD</span></div>
+            <div class="arch-node"><span class="arch-ico">🐙</span><b>GitHub Repos</b><span>Code &amp; docs</span></div>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-engine">
+            <span class="arch-ico">✦</span>
+            <b>ContextFlow Engine</b>
+            <div class="arch-tags">
+                <span>Ingest</span><span>Understand</span><span>Retrieve</span>
+            </div>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-col">
+            <div class="arch-node accent"><span class="arch-ico">💬</span><b>Every conversation</b><span>Grounded, context-aware answers</span></div>
+        </div>
+    </div>
+</div>
+</section>
+
+<!-- Benefits -->
+<section class="lp-section" id="benefits">
+    <div class="lp-section-head">
+        <h2>Why teams choose ContextFlow</h2>
+    </div>
+    <div class="lp-benefits">
+        <div class="lp-benefit"><span class="lp-check">✓</span><div><b>Stop re-explaining context</b><p>Your knowledge is always available — every chat already knows your stack, docs, and decisions.</p></div></div>
+        <div class="lp-benefit"><span class="lp-check">✓</span><div><b>Faster, more accurate answers</b><p>Only relevant context is retrieved, so responses stay sharp and grounded in your reality.</p></div></div>
+        <div class="lp-benefit"><span class="lp-check">✓</span><div><b>Knowledge that compounds</b><p>Add documents and repos over time. Your workspace gets smarter as your organization grows.</p></div></div>
+        <div class="lp-benefit"><span class="lp-check">✓</span><div><b>Control &amp; visibility</b><p>Role-based access and usage analytics keep teams secure and spend transparent.</p></div></div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="lp-band">
+<div class="lp-section lp-cta-band">
+    <h2>Give your team a workspace that remembers.</h2>
+    <p>Connect your knowledge once and let every conversation understand your organization.</p>
+    <a class="btn primary lg" href="{{ url_for('auth.login') }}">Get Started</a>
+</div>
+</section>
+
+<footer class="lp-footer">
+    <span class="lp-copy">© ContextFlow · Context Engineering Platform</span>
+    <div class="lp-foot-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#benefits">Benefits</a>
+        <a href="{{ url_for('auth.login') }}">Login</a>
+    </div>
+</footer>
+
+</body>
+</html>

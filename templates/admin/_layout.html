@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{% block admin_title %}Admin{% endblock %} — ContextFlow{% endblock %}
+
+{% block sidebar %}
+<div class="s-label">Admin{% if g.user.is_super_admin %} · Super{% else %} · Company{% endif %}</div>
+<a class="s-nav-link {% if admin_tab == 'overview' %}on{% endif %}" href="{{ url_for('admin_overview') }}">
+    <span class="s-nav-ico">◆</span>Overview
+</a>
+<a class="s-nav-link {% if admin_tab == 'users' %}on{% endif %}" href="{{ url_for('admin_users') }}">
+    <span class="s-nav-ico">◔</span>Users
+</a>
+<a class="s-nav-link {% if admin_tab == 'workspaces' %}on{% endif %}" href="{{ url_for('admin_workspaces') }}">
+    <span class="s-nav-ico">▦</span>Workspaces
+</a>
+<a class="s-nav-link {% if admin_tab == 'analytics' %}on{% endif %}" href="{{ url_for('admin_analytics') }}">
+    <span class="s-nav-ico">▲</span>Analytics
+</a>
+{% if g.user.is_super_admin %}
+<a class="s-nav-link {% if admin_tab == 'ai' %}on{% endif %}" href="{{ url_for('admin_ai_tools') }}">
+    <span class="s-nav-ico">✦</span>AI Diagnostics
+</a>
+<a class="s-nav-link {% if admin_tab == 'companies' %}on{% endif %}" href="{{ url_for('admin_companies') }}">
+    <span class="s-nav-ico">◫</span>Companies
+</a>
+<a class="s-nav-link {% if admin_tab == 'audit' %}on{% endif %}" href="{{ url_for('admin_audit') }}">
+    <span class="s-nav-ico">≣</span>Audit Log
+</a>
+<a class="s-nav-link {% if admin_tab == 'system' %}on{% endif %}" href="{{ url_for('admin_system') }}">
+    <span class="s-nav-ico">⚙</span>System
+</a>
+{% endif %}
+
+<div class="s-label" style="margin-top:14px">Your account</div>
+<a class="s-nav-link" href="{{ url_for('profile') }}"><span class="s-nav-ico">◔</span>Profile</a>
+<a class="s-nav-link" href="{{ url_for('usage_view') }}"><span class="s-nav-ico">▤</span>Usage</a>
+{% for ws in sidebar_workspaces %}
+<a class="s-nav-link" href="{{ url_for('workspace_view', ws_id=ws.id) }}">
+    <span class="s-nav-ico">{{ ws.name[0]|upper }}</span><span class="ws-name">{{ ws.name }}</span>
+</a>
+{% endfor %}
+<a class="s-connect" href="{{ url_for('connect') }}">
+    <span class="ws-ico">＋</span>Create Workspace
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="page admin-page">
+    <div class="admin-head">
+        <div>
+            <h1>{{ self.admin_title() }}</h1>
+            <p class="admin-sub">{% block admin_sub %}{% endblock %}</p>
+        </div>
+        {% block admin_actions %}{% endblock %}
+    </div>
+    {% block admin_body %}{% endblock %}
+</div>
+{% endblock %}

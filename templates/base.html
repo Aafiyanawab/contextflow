@@ -10,6 +10,18 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
+{% with msgs = get_flashed_messages(with_categories=true) %}
+{% if msgs %}
+<div class="toast-wrap" id="toastWrap" aria-live="polite">
+    {% for cat, msg in msgs %}
+    <div class="toast toast-{{ cat }}">
+        <span class="toast-ico">{{ "✓" if cat == "good" else "!" }}</span>
+        <span class="toast-msg">{{ msg }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
 <div class="topbar">
     <button class="menu-btn" id="menuBtn" aria-label="Open navigation">☰</button>
     <span style="font-weight:700; font-size:14px">ContextFlow</span>
@@ -18,40 +30,79 @@
 
 <div class="shell">
     <aside class="sidebar" aria-label="Workspace navigation">
-        <a class="s-logo" href="{{ url_for('index') }}">
-            <span class="s-mark">
-                <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true">
-                    <path d="M2 6h3M7 6h3M5 6a1.4 1.4 0 1 0 0-.01M2 2.8h2.4M2 9.2h2.4"
-                          stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-                    <circle cx="9.6" cy="2.8" r="1.1" fill="#fff"/>
-                    <circle cx="9.6" cy="9.2" r="1.1" fill="#fff"/>
+        <div class="s-top">
+            <a class="s-logo" href="{{ url_for('index') }}">
+                <span class="s-mark">
+                    <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true">
+                        <path d="M2 6h3M7 6h3M5 6a1.4 1.4 0 1 0 0-.01M2 2.8h2.4M2 9.2h2.4"
+                              stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+                        <circle cx="9.6" cy="2.8" r="1.1" fill="#fff"/>
+                        <circle cx="9.6" cy="9.2" r="1.1" fill="#fff"/>
+                    </svg>
+                </span>
+                <span class="s-logo-text">ContextFlow</span>
+            </a>
+            <button class="s-collapse" id="sidebarCollapse" aria-label="Collapse sidebar" title="Collapse sidebar">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/>
                 </svg>
-            </span>
-            ContextFlow
-        </a>
+            </button>
+        </div>
 
+        {% block sidebar %}
+        <div class="s-search-wrap">
+            <span class="s-search-ico">⌕</span>
+            <input type="search" class="s-search" id="navSearch" placeholder="Search chats…" autocomplete="off" aria-label="Search chats">
+        </div>
         <div class="s-label">Workspaces</div>
         {% for ws in sidebar_workspaces %}
-        <details class="ws" {% if active_ws and ws.id == active_ws.id %}data-active open{% endif %}>
+        <details class="ws" data-ws-url="{{ url_for('workspace_view', ws_id=ws.id) }}"
+                 data-ws-name="{{ ws.name|lower }}"
+                 {% if active_ws and ws.id == active_ws.id %}data-active open{% endif %}>
             <summary>
                 <span class="ws-ico">{{ ws.name[0]|upper }}</span>
                 <span class="ws-name">{{ ws.name }}</span>
                 <span class="ws-count">{{ ws.chats|length }}</span>
             </summary>
             <div class="ws-chats">
-                {% for chat in ws.chats %}
+                {% for chat in ws.chats|sort(attribute='pinned', reverse=true) %}
                 <a class="chat-link {% if active_chat and chat.id == active_chat.id %}on{% endif %}"
-                   href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}">
+                   href="{{ url_for('chat_view', ws_id=ws.id, chat_id=chat.id) }}"
+                   data-chat-id="{{ chat.id }}" data-title="{{ chat.title|lower }}">
                     <span class="dot"></span><span class="cl-t">{{ chat.title }}</span>
+                    {% if chat.pinned %}<span class="pin-dot" title="Pinned">📌</span>{% endif %}
                 </a>
                 {% endfor %}
-                <a class="chat-link new" href="{{ url_for('workspace_view', ws_id=ws.id) }}#new-chat">＋ New chat</a>
+                <form method="POST" action="{{ url_for('create_chat', ws_id=ws.id) }}"
+                      class="chat-new-form js-newchat" data-ws-id="{{ ws.id }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="chat-link new">＋ New chat</button>
+                </form>
             </div>
         </details>
         {% endfor %}
+        <div class="s-empty-search" id="searchEmpty" hidden>No chats match your search.</div>
         <a class="s-connect" href="{{ url_for('connect') }}">
-            <span class="ws-ico">＋</span>Connect repository
+            <span class="ws-ico">＋</span>Create Workspace
         </a>
+
+        <div class="s-nav">
+            <a class="s-nav-link {% if active_nav == 'profile' %}on{% endif %}"
+               href="{{ url_for('profile') }}">
+                <span class="s-nav-ico">◔</span>Profile
+            </a>
+            <a class="s-nav-link {% if active_nav == 'usage' %}on{% endif %}"
+               href="{{ url_for('usage_view') }}">
+                <span class="s-nav-ico">▤</span>Usage
+            </a>
+            {% if g.user and g.user.is_admin %}
+            <a class="s-nav-link {% if active_nav == 'admin' %}on{% endif %}"
+               href="{{ url_for('admin_overview') }}">
+                <span class="s-nav-ico">◆</span>Admin
+            </a>
+            {% endif %}
+        </div>
+        {% endblock %}
 
         <div class="s-foot">
             <div class="s-usage">
@@ -61,12 +112,14 @@
             </div>
             {% if g.user %}
             <div class="s-user">
+                <a class="s-user-id" href="{{ url_for('profile') }}" title="View your profile">
                 {% if g.user.avatar_url %}
                 <img class="s-avatar" src="{{ g.user.avatar_url }}" alt="" width="26" height="26">
                 {% else %}
                 <span class="s-avatar s-avatar-fallback">{{ (g.user.name or "?")[0]|upper }}</span>
                 {% endif %}
                 <span class="s-user-name" title="{{ g.user.email or '' }}">{{ g.user.name }}</span>
+                </a>
                 <form method="POST" action="{{ url_for('auth.logout') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="s-logout" type="submit">Sign out</button>
@@ -81,10 +134,94 @@
     </main>
 </div>
 <script nonce="{{ csp_nonce }}">
-    document.getElementById("menuBtn").addEventListener("click",
-        () => document.body.classList.add("nav-open"));
-    document.getElementById("navScrim").addEventListener("click",
-        () => document.body.classList.remove("nav-open"));
+    const body = document.body;
+    // Toasts: auto-dismiss flashed messages
+    document.querySelectorAll("#toastWrap .toast").forEach((t, i) => {
+        setTimeout(() => {
+            t.classList.add("hide");
+            setTimeout(() => t.remove(), 350);
+        }, 3400 + i * 500);
+    });
+    // Mobile drawer
+    const menuBtn = document.getElementById("menuBtn");
+    if (menuBtn) menuBtn.addEventListener("click", () => body.classList.add("nav-open"));
+    const navScrim = document.getElementById("navScrim");
+    if (navScrim) navScrim.addEventListener("click", () => body.classList.remove("nav-open"));
+
+    // Collapsible sidebar (desktop), persisted across pages
+    const collapseBtn = document.getElementById("sidebarCollapse");
+    if (localStorage.getItem("cf-sidebar") === "collapsed") body.classList.add("sidebar-collapsed");
+    if (collapseBtn) collapseBtn.addEventListener("click", () => {
+        const c = body.classList.toggle("sidebar-collapsed");
+        localStorage.setItem("cf-sidebar", c ? "collapsed" : "open");
+    });
+    // Collapsed rail: a workspace tile links straight to its workspace.
+    document.querySelectorAll(".ws").forEach((el) => {
+        const summary = el.querySelector("summary");
+        if (summary) summary.addEventListener("click", (e) => {
+            if (body.classList.contains("sidebar-collapsed")) {
+                e.preventDefault();
+                window.location = el.dataset.wsUrl;
+            }
+        });
+    });
+
+    // Sidebar chat search
+    const navSearch = document.getElementById("navSearch");
+    const searchEmpty = document.getElementById("searchEmpty");
+    if (navSearch) navSearch.addEventListener("input", () => {
+        const q = navSearch.value.trim().toLowerCase();
+        let anyVisible = false;
+        document.querySelectorAll(".ws").forEach((ws) => {
+            const wsName = ws.dataset.wsName || "";
+            let wsMatch = !q || wsName.includes(q);
+            ws.querySelectorAll(".chat-link:not(.new)").forEach((link) => {
+                const t = link.dataset.title || "";
+                const show = !q || t.includes(q) || wsName.includes(q);
+                link.style.display = show ? "" : "none";
+                if (show && q) wsMatch = true;
+            });
+            ws.style.display = wsMatch ? "" : "none";
+            if (wsMatch) { anyVisible = true; if (q) ws.open = true; }
+            const newForm = ws.querySelector(".chat-new-form");
+            if (newForm) newForm.style.display = q ? "none" : "";
+        });
+        if (searchEmpty) searchEmpty.hidden = !(q && !anyVisible);
+    });
+
+    // Any form marked data-confirm asks before its (often destructive) POST.
+    document.addEventListener("submit", (e) => {
+        const msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
+        if (msg && !window.confirm(msg)) e.preventDefault();
+    });
+
+    // ── New Chat: identical everywhere, no page refresh ──
+    // Both sidebar and workspace buttons hit the same create endpoint via
+    // fetch. On a chat page we open the new chat in place; elsewhere we
+    // navigate to it. Falls back to a normal submit if fetch fails.
+    const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+    window.cfNewChat = async function (wsId, formEl) {
+        try {
+            const res = await fetch("/w/" + wsId + "/chats", {
+                method: "POST",
+                headers: { "X-Requested-With": "fetch", "X-CSRF-Token": CSRF },
+                body: new URLSearchParams({ csrf_token: CSRF }),
+            });
+            if (res.status === 401) { window.location = "/login?error=session_expired"; return; }
+            const data = await res.json();
+            if (window.__chatInPlace) window.__chatInPlace(data);
+            else window.location = data.url;
+        } catch {
+            if (formEl) { formEl.classList.remove("js-newchat"); formEl.submit(); }
+        }
+    };
+    document.addEventListener("submit", (e) => {
+        const form = e.target;
+        if (form.classList && form.classList.contains("js-newchat")) {
+            e.preventDefault();
+            window.cfNewChat(form.dataset.wsId, form);
+        }
+    });
 </script>
 {% block scripts %}{% endblock %}
 </body>

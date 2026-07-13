@@ -15,19 +15,71 @@ def utcnow():
 
 
 class User(db.Model):
-    """An authenticated person. Owns workspaces; identities hold the
-    OAuth provider links (GitHub now, Google later)."""
+    """An authenticated person. Owns workspaces; identities hold OAuth
+    provider links (GitHub, Google). password_hash is set only for
+    email/password accounts — OAuth-only users have none."""
     id = db.Column(db.String(32), primary_key=True, default=_uuid)
     name = db.Column(db.String(120))
     email = db.Column(db.String(254), unique=True)
+    password_hash = db.Column(db.String(255))  # null for OAuth-only accounts
     avatar_url = db.Column(db.String(300))
+    company_name = db.Column(db.String(120))  # free-text, self-entered on profile
+    company_id = db.Column(db.String(32), db.ForeignKey("company.id"))
+    # RBAC: "super_admin" | "company_admin" | "employee". Assigned via the
+    # admin dashboard or `flask set-admin`; role decides where a login lands
+    # and what the admin dashboard scopes to.
+    role = db.Column(db.String(20), nullable=False, default="employee")
+    # Soft-disable: a deactivated account can't establish a session.
+    active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     last_login_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    @property
+    def is_super_admin(self):
+        return self.role == "super_admin"
+
+    @property
+    def is_company_admin(self):
+        return self.role == "company_admin"
+
+    @property
+    def is_admin(self):
+        """Anyone who may open the admin dashboard."""
+        return self.role in ("super_admin", "company_admin")
+
+    @property
+    def auth_provider(self):
+        if self.identities:
+            return self.identities[0].provider.capitalize()
+        return "Email" if self.password_hash else "—"
 
     identities = db.relationship("OAuthIdentity", backref="user",
                                  cascade="all, delete-orphan")
     workspaces = db.relationship("Workspace", backref="owner",
                                  cascade="all, delete-orphan")
+
+
+class Company(db.Model):
+    """An organization. Company Admins manage users within their own
+    company; Super Admins manage every company."""
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    name = db.Column(db.String(120), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    members = db.relationship("User", backref="company")
+
+
+class AuditLog(db.Model):
+    """Append-only record of privileged admin actions (role changes,
+    (de)activations, company management). actor_* are denormalized so
+    the trail survives deletion of the acting user."""
+    __tablename__ = "audit_log"
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    actor_id = db.Column(db.String(32))
+    actor_email = db.Column(db.String(254))
+    action = db.Column(db.String(40), nullable=False)
+    target = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 
 class OAuthIdentity(db.Model):
@@ -152,6 +204,14 @@ class Chunk(db.Model):
     embedding = db.Column(db.LargeBinary)  # packed float32; null until embedded
     embedding_model = db.Column(db.String(40))
 
+    # Deleting a chunk (e.g. disconnecting the repo it came from) must also
+    # drop its capsule memberships — otherwise the capsule_chunk → chunk FK
+    # blocks the delete on an enforcing DB. Capsules themselves survive; a
+    # rebuild prunes any emptied ones. Chats never reference chunks, so this
+    # keeps conversations fully independent of knowledge sources.
+    capsule_links = db.relationship("CapsuleChunk", backref="chunk",
+                                    cascade="all, delete-orphan")
+
 
 class Capsule(db.Model):
     """An automatically maintained knowledge domain: routing index always,
@@ -195,6 +255,7 @@ class Chat(db.Model):
     id = db.Column(db.String(32), primary_key=True, default=_uuid)
     workspace_id = db.Column(db.String(32), db.ForeignKey("workspace.id"), nullable=False)
     title = db.Column(db.String(160), nullable=False, default="New chat")
+    pinned = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
@@ -217,11 +278,19 @@ class Message(db.Model):
 
     # Orchestration snapshot — assistant messages only
     intent = db.Column(db.String(24))
-    method = db.Column(db.String(16))  # rule-based | openai
+    method = db.Column(db.String(16))  # rule-based | keywords | semantic | global-fallback
     matched_keywords = db.Column(db.JSON)
-    injected_context = db.Column(db.JSON)
+    injected_context = db.Column(db.JSON)  # profile keys (github workspaces)
     withheld_context = db.Column(db.JSON)
     tokens_in = db.Column(db.Integer, nullable=False, default=0)
     tokens_out = db.Column(db.Integer, nullable=False, default=0)
+
+    # Capsule-routing snapshot (Increment 6) — frozen per exchange so the
+    # Inspector stays truthful after later rescans/re-clustering.
+    capsules_used = db.Column(db.JSON)      # [{title, summary_injected, tokens}]
+    capsules_withheld = db.Column(db.JSON)  # [{title, reason}]
+    chunks_used = db.Column(db.JSON)        # [{filename, page, tokens, score}]
+    context_tokens = db.Column(db.Integer, nullable=False, default=0)  # actually sent
+    naive_tokens = db.Column(db.Integer, nullable=False, default=0)    # naive-RAG baseline
 
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)

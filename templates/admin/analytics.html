@@ -1,0 +1,105 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Analytics{% endblock %}
+{% block admin_sub %}{{ scope }} — token usage, cost, and model usage over time.{% endblock %}
+
+{% block admin_body %}
+{% set dmax = (data.daily|map(attribute='tokens')|max) or 1 %}
+{% set mmax = (data.monthly|map(attribute='tokens')|max) or 1 %}
+
+<div class="section">
+    <span class="lbl">Model usage &amp; provider cost</span>
+    <div class="card tbl-card">
+        <div class="tbl-scroll">
+        <table class="tbl">
+            <thead><tr><th>Model</th><th>Provider</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr></thead>
+            <tbody>
+                {% for m in data.model_usage %}
+                <tr>
+                    <td><span class="tbl-name mono">{{ m.model }}</span></td>
+                    <td class="meta">{{ m.provider }}</td>
+                    <td class="num">{{ "{:,}".format(m.requests) }}</td>
+                    <td class="num">{{ "{:,}".format(m.tokens) }}</td>
+                    <td class="num">{{ m.cost|usd }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+
+<div class="chart-card card">
+    <div class="chart-head">
+        <b>Daily token usage</b>
+        <span class="meta">last 14 days · {{ "{:,}".format(data.daily|sum(attribute='tokens')) }} tokens ·
+            {{ (data.daily|sum(attribute='cost'))|usd }}</span>
+    </div>
+    <div class="bars">
+        {% for d in data.daily %}
+        <div class="bar-col" title="{{ d.label }} · {{ '{:,}'.format(d.tokens) }} tokens · {{ d.cost|usd }}">
+            <div class="bar-track">
+                <div class="bar" style="height: {{ (d.tokens * 100 / dmax)|round }}%"></div>
+            </div>
+            <span class="bar-lbl">{{ d.label.split(' ')[1] }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="chart-card card">
+    <div class="chart-head">
+        <b>Monthly token usage</b>
+        <span class="meta">last 6 months · {{ "{:,}".format(data.monthly|sum(attribute='tokens')) }} tokens ·
+            {{ (data.monthly|sum(attribute='cost'))|usd }}</span>
+    </div>
+    <div class="bars wide">
+        {% for m in data.monthly %}
+        <div class="bar-col" title="{{ m.label }} · {{ '{:,}'.format(m.tokens) }} tokens · {{ m.cost|usd }}">
+            <div class="bar-track">
+                <div class="bar accent" style="height: {{ (m.tokens * 100 / mmax)|round }}%"></div>
+            </div>
+            <span class="bar-lbl">{{ m.label.split(' ')[0] }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="two-col">
+    <div class="section">
+        <span class="lbl">Most active users</span>
+        <div class="card list-card">
+            {% for r in data.top_users %}
+            <a class="list-row" href="{{ url_for('admin_user_detail', user_id=r.u.id) }}">
+                <span class="list-main">
+                    <span class="rank">{{ loop.index }}</span>
+                    <span class="list-title">{{ r.u.name or r.u.email }}</span>
+                </span>
+                <span class="meta">{{ "{:,}".format(r.tokens) }} tokens</span>
+                <span class="meta">{{ r.cost|usd }}</span>
+            </a>
+            {% else %}
+            <div class="empty-state"><p>No usage yet.</p></div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="section">
+        <span class="lbl">Most active workspaces</span>
+        <div class="card list-card">
+            {% for r in data.top_workspaces %}
+            <div class="list-row static">
+                <span class="list-main">
+                    <span class="rank">{{ loop.index }}</span>
+                    <span class="list-title">{{ r.ws.name }}</span>
+                    {% if r.owner %}<span class="list-tag">{{ r.owner.email }}</span>{% endif %}
+                </span>
+                <span class="meta">{{ r.conversations }} convos</span>
+                <span class="meta">{{ r.cost|usd }}</span>
+            </div>
+            {% else %}
+            <div class="empty-state"><p>No usage yet.</p></div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

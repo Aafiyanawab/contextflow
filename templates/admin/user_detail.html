@@ -1,0 +1,94 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}{{ user.name or user.email }}{% endblock %}
+{% block admin_sub %}{{ user.email }} · {{ user.role|rolelabel }}{% endblock %}
+
+{% block admin_actions %}
+<div class="head-actions">
+    <a class="btn ghost" href="{{ url_for('admin_users') }}">← All users</a>
+    {% if user.id != g.user.id and not (g.user.is_company_admin and user.is_super_admin) %}
+        {% if user.active %}
+        <form method="POST" action="{{ url_for('admin_deactivate_user', user_id=user.id) }}"
+              data-confirm="Deactivate {{ user.email }}?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn danger" type="submit">Deactivate</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('admin_activate_user', user_id=user.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn primary" type="submit">Activate</button>
+        </form>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block admin_body %}
+<div class="detail-tags">
+    <span class="role-badge {% if user.is_admin %}admin{% endif %}">{{ user.role|rolelabel }}</span>
+    {% if user.active %}<span class="role-badge good">Active</span>{% else %}<span class="role-badge off">Deactivated</span>{% endif %}
+    <span class="meta">{{ company or "No company" }} · {{ user.auth_provider }} · Joined {{ user.created_at|timeago }}</span>
+</div>
+
+{% if user.id != g.user.id and not (g.user.is_company_admin and user.is_super_admin) %}
+<div class="section">
+    <span class="lbl">Role &amp; access</span>
+    <div class="card pad access-row">
+        <form method="POST" action="{{ url_for('admin_set_role', user_id=user.id) }}" class="role-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <span class="ro-k">Role</span>
+            <select name="role" class="mini-select">
+                {% for role in ["super_admin", "company_admin", "employee"] %}
+                {% if role in (g.user.is_super_admin and ["super_admin","company_admin","employee"] or ["company_admin","employee"]) %}
+                <option value="{{ role }}" {% if role == user.role %}selected{% endif %}>{{ role|rolelabel }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+            <button class="btn tiny" type="submit">Update role</button>
+        </form>
+        {% if g.user.is_super_admin %}
+        <form method="POST" action="{{ url_for('admin_assign_company', user_id=user.id) }}" class="role-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <span class="ro-k">Company</span>
+            <select name="company_id" class="mini-select">
+                <option value="">— None —</option>
+                {% for c in companies_list %}
+                <option value="{{ c.id }}" {% if c.id == user.company_id %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn tiny" type="submit">Assign</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="stat-grid">
+    <div class="stat"><span class="stat-k">Conversations</span><b class="stat-v">{{ "{:,}".format(conversations) }}</b></div>
+    <div class="stat"><span class="stat-k">Total tokens</span><b class="stat-v">{{ "{:,}".format(stats.tokens) }}</b></div>
+    <div class="stat"><span class="stat-k">Estimated AI cost</span><b class="stat-v accent">{{ stats.cost|usd }}</b></div>
+    <div class="stat"><span class="stat-k">Avg context saved</span><b class="stat-v good">{{ stats.context_reduction }}%</b></div>
+    <div class="stat"><span class="stat-k">Prompt tokens</span><b class="stat-v">{{ "{:,}".format(stats.tokens_in) }}</b></div>
+    <div class="stat"><span class="stat-k">Completion tokens</span><b class="stat-v">{{ "{:,}".format(stats.tokens_out) }}</b></div>
+    <div class="stat"><span class="stat-k">Workspaces</span><b class="stat-v">{{ counts.workspaces }}</b></div>
+    <div class="stat"><span class="stat-k">Documents</span><b class="stat-v">{{ counts.documents }}</b></div>
+</div>
+
+<div class="section">
+    <span class="lbl">Recent conversations</span>
+    <div class="card list-card">
+        {% for chat in recent %}
+        <div class="list-row static">
+            <span class="list-main">
+                <span class="dot"></span>
+                <span class="list-title">{{ chat.title }}</span>
+                <span class="list-tag">{{ chat.workspace.name }}</span>
+            </span>
+            <span class="meta">{{ chat.messages|length }} message{{ "s" if chat.messages|length != 1 }}</span>
+            <span class="meta">{{ chat.updated_at|timeago }}</span>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>No conversations yet.</p></div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

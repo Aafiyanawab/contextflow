@@ -1,0 +1,41 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Workspaces{% endblock %}
+{% block admin_sub %}{{ scope }} — {{ rows|length }} workspace{{ "s" if rows|length != 1 }}, most recently active first.{% endblock %}
+
+{% block admin_body %}
+<div class="card tbl-card">
+    <div class="tbl-scroll">
+    <table class="tbl">
+        <thead>
+            <tr>
+                <th>Workspace</th><th>Owner</th>
+                <th class="num">Sources</th><th class="num">Capsules</th>
+                <th class="num">Docs</th><th class="num">Convos</th>
+                <th class="num">Est. cost</th><th class="num">Saved</th><th class="num">Last active</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td><span class="tbl-name">{{ r.ws.name }}</span></td>
+                <td>
+                    {% if r.owner %}
+                    <a class="tbl-email" href="{{ url_for('admin_user_detail', user_id=r.owner.id) }}">{{ r.owner.email }}</a>
+                    {% else %}<span class="meta">—</span>{% endif %}
+                </td>
+                <td class="num">{{ r.sources }}</td>
+                <td class="num">{{ r.capsules }}</td>
+                <td class="num">{{ r.documents }}</td>
+                <td class="num">{{ r.conversations }}</td>
+                <td class="num">{{ r.cost|usd }}</td>
+                <td class="num"><span class="pct good">{{ r.reduction }}%</span></td>
+                <td class="num meta">{{ r.last_activity|timeago }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="9"><div class="empty-state"><p>No workspaces yet.</p></div></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}
