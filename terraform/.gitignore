@@ -1,0 +1,15 @@
+# Never commit these. NOTE: .gitignore does not support trailing inline
+# comments — a comment must be on its own line, or it becomes part of the
+# pattern and silently matches nothing.
+
+# Downloaded provider plugins (large)
+.terraform/
+
+# State — can contain secrets (e.g. the RDS password), IPs; also machine-specific
+*.tfstate
+*.tfstate.*
+
+# Per-machine overrides (may hold sensitive values)
+*.tfvars
+
+crash.log
