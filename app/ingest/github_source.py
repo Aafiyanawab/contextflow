@@ -48,18 +48,26 @@ def _sort_key(path):
     return (0 if ext in DOC_EXTENSIONS else 1, path.count("/"), path)
 
 
-def select_repo_files(repo):
-    """→ capped, docs-first list of (path, size) from the repo tree."""
-    tree = repo.get_git_tree("HEAD", recursive=True)
-    candidates = [(item.path, item.size) for item in tree.tree
+def select_repo_files(repo, ref="HEAD"):
+    """→ capped, docs-first list of (path, size, blob_sha) from the repo tree
+    at `ref` (default HEAD). blob_sha is git's per-file content hash — the
+    change signal the incremental sync engine diffs — and it comes free with
+    the tree walk, so recording it costs no extra API calls."""
+    tree = repo.get_git_tree(ref, recursive=True)
+    candidates = [(item.path, item.size, item.sha) for item in tree.tree
                   if item.type == "blob" and _selectable(item.path, item.size)]
     candidates.sort(key=lambda c: _sort_key(c[0]))
     return candidates[:MAX_REPO_FILES]
 
 
 def sync_github_documents(source, github_token, progress=None):
-    """Mirror the selected repo files into Document rows and run the
-    shared pipeline tail on new/changed ones. → stats dict."""
+    """Full repo index: mirror the selected repo files into Document rows and
+    run the shared pipeline tail on new/changed ones. Also records each file's
+    repo_path + git blob SHA and stamps the source's synced-commit baseline, so
+    the incremental sync engine can diff against it later. → stats dict.
+
+    This stays the FULL indexer — the initial scan and the one-time legacy
+    re-index both use it; incremental syncs go through the sync engine."""
     from app.ingest import process_document  # shared tail; avoid cycle
 
     def report(detail):
@@ -68,13 +76,18 @@ def sync_github_documents(source, github_token, progress=None):
 
     repo_name = "/".join(source.uri.rstrip("/").split("/")[-2:])
     repo = Github(github_token).get_repo(repo_name)
-    selected = select_repo_files(repo)
+    # Resolve the head commit FIRST, then read the tree AT that commit, so the
+    # blob SHAs we record match the commit we stamp as the baseline — even if a
+    # push lands mid-sync (the next sync then diffs from a truthful base).
+    default_branch = repo.default_branch
+    head_sha = repo.get_branch(default_branch).commit.sha
+    selected = select_repo_files(repo, ref=head_sha)
 
     existing = {d.sha256: d for d in Document.query.filter_by(
         source_id=source.id).all()}
     seen_shas, added, unchanged, chunks_made = set(), 0, 0, 0
 
-    for i, (path, _size) in enumerate(selected, start=1):
+    for i, (path, _size, blob_sha) in enumerate(selected, start=1):
         try:
             data = repo.get_contents(path).decoded_content
         except Exception:
@@ -85,6 +98,13 @@ def sync_github_documents(source, github_token, progress=None):
         seen_shas.add(sha)
         if sha in existing:
             unchanged += 1
+            # Backfill the identity/change fields onto pre-existing rows. This
+            # is a no-op on a fresh scan (nothing is "existing"); it is how a
+            # legacy repo's one-time full sync establishes its path baseline.
+            kept = existing[sha]
+            kept.repo_path = path[:300]
+            kept.filename = path[:300]
+            kept.blob_sha = blob_sha
             continue
 
         text = data.decode("utf-8", errors="replace").strip()
@@ -93,8 +113,8 @@ def sync_github_documents(source, github_token, progress=None):
         ext = os.path.splitext(path)[1].lower()
         kind = "prose" if ext in DOC_EXTENSIONS else "code"
         doc = Document(source_id=source.id, workspace_id=source.workspace_id,
-                       filename=path[:300], mime="text/plain",
-                       size_bytes=len(data), sha256=sha,
+                       filename=path[:300], repo_path=path[:300], blob_sha=blob_sha,
+                       mime="text/plain", size_bytes=len(data), sha256=sha,
                        text=text, status="extracted")
         db.session.add(doc)
         db.session.commit()
@@ -110,6 +130,10 @@ def sync_github_documents(source, github_token, progress=None):
             db.session.delete(doc)  # cascades to chunks
             removed += 1
     source.last_ingested_at = utcnow()
+    # Record the sync baseline: the commit the incremental engine's head-guard
+    # compares against, and the branch whose head it tracks.
+    source.last_synced_commit_sha = head_sha
+    source.default_branch = default_branch
     db.session.commit()
 
     stats = {"files": added, "unchanged": unchanged, "removed": removed,

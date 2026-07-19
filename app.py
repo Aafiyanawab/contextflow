@@ -37,6 +37,7 @@ from app.ingest.chunking import count_tokens
 from app.ingest import ingest_upload_batch
 from app.ingest.extract import ALLOWED_EXTENSIONS
 from app.ingest.github_source import sync_github_documents
+from app.ingest.repo_sync import sync_repository
 from app.ratelimit import rate_limit
 from app.storage import LocalStorage
 from openai import OpenAI
@@ -814,24 +815,35 @@ def _capsule_cards(ws_id):
 @login_required
 @rate_limit("scan", limit=10, per_seconds=600, message=SCAN_LIMIT_MESSAGE)
 def rescan_workspace(ws_id):
+    """Sync a connected repo through the incremental engine (head-commit guard
+    + tree-diff); the engine falls back to a full index on a repo's first sync.
+    Stack-profile re-discovery runs only when something actually changed, so an
+    up-to-date repo costs one head-commit lookup and downloads nothing."""
     ws = get_owned_workspace(ws_id)
     src = ws.github_source
     if not src:
         abort(404)
-    try:
-        context = discover_repo_context(src.uri)
-    except Exception as e:
-        return jsonify({"error": _friendly_scan_error(str(e))}), 502
-    src.profile = context
-    src.last_ingested_at = utcnow()
+    # Guard against overlapping syncs (double-click, second tab).
+    if src.status == "ingesting":
+        return jsonify({"error": "A sync is already in progress."}), 409
+    src.status = "ingesting"
     db.session.commit()
-    # Content re-index through the common pipeline: new/changed files
-    # in, vanished files out. Profile already saved — an index failure
-    # degrades rather than failing the rescan.
     try:
-        stats = sync_github_documents(src, os.getenv("GITHUB_TOKEN"))
+        stats = sync_repository(src, os.getenv("GITHUB_TOKEN"))
     except Exception:
+        src.status = "ready"
+        db.session.commit()
         return jsonify({"ok": True, "index": "failed"})
+    # Refresh the discovered stack profile only when the repo moved — an
+    # "unchanged" sync stays zero-work. Best-effort: a discovery failure must
+    # not undo an otherwise-successful content sync.
+    if stats.get("status") != "unchanged":
+        try:
+            src.profile = discover_repo_context(src.uri)
+        except Exception:
+            pass
+    src.status = "ready"
+    db.session.commit()
     return jsonify({"ok": True, "index": stats})
 
 

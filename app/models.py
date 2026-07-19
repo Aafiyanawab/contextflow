@@ -153,6 +153,11 @@ class KnowledgeSource(db.Model):
     error = db.Column(db.Text)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     last_ingested_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    # Incremental-sync baseline (repo sources): the git commit we last synced
+    # to — the head-commit guard compares against it — and the branch whose
+    # head we track. Both null until the first sync records them.
+    last_synced_commit_sha = db.Column(db.String(40))
+    default_branch = db.Column(db.String(120))
 
     # The same repo can't be connected twice to one workspace.
     __table_args__ = (db.UniqueConstraint("workspace_id", "uri"),)
@@ -162,18 +167,24 @@ class KnowledgeSource(db.Model):
 
 
 class Document(db.Model):
-    """One file inside a source (an uploaded file, or later a repo file).
-    sha256 dedupes re-uploads per workspace. Populated from Increment 2;
-    the table exists now so migrations stay linear."""
+    """One file inside a source (an uploaded file, or a repo file).
+    Identity is per source type: a repo file is identified by its repo_path
+    (so README.md and docs/README.md stay distinct even with byte-identical
+    content); uploads have repo_path NULL and dedupe on content in app code.
+    sha256 stays for integrity / upload dedupe; blob_sha (the git blob SHA)
+    is the per-file change signal the incremental sync engine diffs."""
     id = db.Column(db.String(32), primary_key=True, default=_uuid)
     source_id = db.Column(db.String(32), db.ForeignKey("knowledge_source.id"),
                           nullable=False)
     workspace_id = db.Column(db.String(32), db.ForeignKey("workspace.id"),
                              nullable=False)
-    filename = db.Column(db.String(300), nullable=False)
+    filename = db.Column(db.String(300), nullable=False)  # repo path or upload name — display/attribution
+    # Repo-file identity + change tracking (both null for uploads):
+    repo_path = db.Column(db.String(300))  # repo-relative path; the identity key for github docs
+    blob_sha = db.Column(db.String(40))    # git blob SHA; per-file change signal for incremental sync
     mime = db.Column(db.String(100))
     size_bytes = db.Column(db.Integer, nullable=False, default=0)
-    sha256 = db.Column(db.String(64), nullable=False)
+    sha256 = db.Column(db.String(64), nullable=False)  # content hash — integrity + upload dedupe
     storage_key = db.Column(db.String(120))  # original file, via app/storage.py
     text = db.Column(db.Text)  # extraction result; chunks derive from this
     meta = db.Column(db.JSON, nullable=False, default=dict)  # pages, …
@@ -182,7 +193,12 @@ class Document(db.Model):
     error = db.Column(db.Text)  # user-safe extraction failure reason
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
-    __table_args__ = (db.UniqueConstraint("workspace_id", "sha256"),)
+    # Repo files are identified by path, not content, so two files with
+    # identical bytes at different paths are distinct rows. Uploads keep
+    # repo_path NULL — NULLs are distinct under a unique constraint, so this
+    # never constrains them (their dedupe is the app-level sha256 check).
+    __table_args__ = (db.UniqueConstraint("source_id", "repo_path",
+                                          name="uq_document_source_id_repo_path"),)
 
     chunks = db.relationship("Chunk", backref="document",
                              cascade="all, delete-orphan")

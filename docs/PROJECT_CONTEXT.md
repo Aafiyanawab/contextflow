@@ -19,6 +19,9 @@ GitHub Actions.
 
 - **Context is discovered, not declared** — scanning the repo's file tree and contents, not a
   settings form the user fills in.
+- **Context stays current, cheaply** — a "Sync" re-indexes only what changed in the repo
+  (added / modified / deleted / renamed files); unchanged files keep their existing embeddings and
+  an up-to-date repo costs a single head-commit check with no downloads.
 - **Context is filtered by intent** — a troubleshooting question gets language/framework context; a
   deployment question gets CI/CD/orchestration context. The full discovered profile is never dumped
   wholesale into prompts (keeps prompts small and answers focused).
@@ -30,8 +33,9 @@ GitHub Actions.
 
 - Single-process Flask app, deployed as one Docker container on EC2 via GitHub Actions → ECR.
 - Public GitHub repositories only (noted in the setup UI).
-- No user accounts or auth — discovered context lives in the Flask browser session.
-- No persistence — stats and history reset on every restart.
+- Accounts via GitHub/Google OAuth or email+password; each user owns workspaces. Connected repos,
+  discovered context, indexed documents/chunks, Knowledge Capsules, chats, and usage all persist
+  (SQLite in dev, Postgres in prod) — a connected repo's knowledge is durable, not per-session.
 - No test suite — modules have inline `__main__` test blocks.
 - Model: `gpt-4o-mini` for both classification fallback and answers.
 

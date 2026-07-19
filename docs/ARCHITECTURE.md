@@ -17,8 +17,13 @@ workspace 1─N capsule N─N chunk (capsule_chunk)              (populated from
 ```
 
 - A workspace's GitHub connection lives in a `knowledge_source` row (`type="github"`);
-  its discovered `profile` (JSON) is written at connect time and on explicit rescan.
+  its discovered `profile` (JSON) is written at connect time and on sync.
   `Workspace.context_profile` is the one read path routes use.
+- Repo files are `document` rows **identified by `repo_path`** (`UNIQUE(source_id, repo_path)`),
+  not by content hash — so identical bytes at different paths (`README.md` vs `docs/README.md`)
+  are distinct rows. `document.blob_sha` (git blob hash) is the incremental-sync change signal;
+  `knowledge_source.last_synced_commit_sha` / `default_branch` are the sync baseline. Uploaded
+  documents leave `repo_path` NULL and de-dupe on `sha256` in app code. Sync is forward-only.
 - Assistant `message` rows store an **orchestration snapshot** (intent, method, matched_keywords,
   injected/withheld context, tokens_in/out) so the Inspector stays accurate even after a rescan
   changes the live workspace context (rescan is forward-only).
@@ -94,6 +99,32 @@ One GitHub API tree walk plus a capped content sample (5 `.tf`, 10 code files) a
 `DISCOVERY_RULES` / hint tables; no cloning. An optional `progress` callback feeds the connect
 page's live step display (via a queue + worker thread in `scan_workspace`). Uses the server-side
 `GITHUB_TOKEN`; public repos only.
+
+## Repository sync (`app/ingest/repo_sync.py`)
+
+Connecting a repo **full-indexes** it: `sync_github_documents` (`app/ingest/github_source.py`)
+selects text-like files from the tree, embeds them into `document`/`chunk` rows, and records each
+file's `repo_path` + git `blob_sha` plus the source's `last_synced_commit_sha` baseline. The
+"Sync" button (`POST /w/<id>/rescan`) then runs the **incremental engine** — the single owner of
+sync logic:
+
+1. **Head-commit guard** — resolve the default branch's head; if it equals the stored baseline,
+   nothing changed, so finish immediately (no tree fetch, no downloads).
+2. **Tree-diff** — otherwise read the current tree and diff its blob SHAs against the stored ones:
+   *added* (new path), *modified* (same path, new blob SHA), *deleted* (stored path gone),
+   *renamed* (a deleted path and an added path sharing a blob SHA).
+3. **Apply** — a rename is a **metadata-only** move that preserves the row's chunks, embeddings and
+   capsule memberships (nothing re-embedded); only *added* / *modified* files are downloaded and
+   re-embedded via `process_document`; *deleted* rows cascade away.
+4. **Capsules** refresh (`refresh_workspace`) only when chunks actually changed (pure renames skip
+   it); the commit **baseline advances only on a clean run**, so a partial sync re-diffs and
+   retries next time.
+
+A source with no baseline (a new repo, or a legacy one connected before this feature) gets one
+**one-time full index** via the same `sync_github_documents`, which records the baseline for future
+incremental syncs. The initial `connect`/`scan` path is unchanged. Change detection is the
+head-commit guard + tree-diff; the GitHub Compare API was considered and deferred as a future
+optimization for very large repos.
 
 ## Frontend
 

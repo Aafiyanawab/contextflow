@@ -28,7 +28,10 @@
   (setup UI already says "Public repositories only for MVP").
 - Broaden `DISCOVERY_RULES`: more languages (Go, Rust), more IaC (Pulumi, CloudFormation), more
   CI systems (GitLab CI, CircleCI); GCP/Azure hints already exist but are Terraform-only.
-- Re-scan / refresh discovered context on demand rather than only at connect time.
+- ✅ **Incremental repository sync (delivered).** The "Sync" button re-indexes only what changed
+  (added / modified / deleted / renamed files) via the engine in `app/ingest/repo_sync.py` —
+  head-commit guard + tree-diff, documents identified by `repo_path`, embeddings and Knowledge
+  Capsules preserved for unchanged files. Supersedes the original "re-scan on demand" idea.
 
 ## Phase 4 — Multi-user product
 
