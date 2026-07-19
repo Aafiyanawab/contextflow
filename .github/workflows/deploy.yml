@@ -1,55 +1,129 @@
-name: ContextFlow CI/CD
+# ContextFlow deployment pipeline — keyless, SHA-tagged, fail-fast.
+#
+#   push to main
+#     -> OIDC: assume contextflow-github-actions  (temp ~1h creds, no stored keys)
+#     -> build the image, tag it with the commit SHA
+#     -> push to Amazon ECR
+#     -> deploy to the EC2 k3s node via SSM Run Command  (no SSH, no open ports):
+#          kubectl set image  ->  kubectl rollout status   (rolling update)
+#
+# Any failing stage stops the run immediately and reports the failing step.
+name: Deploy ContextFlow
 
 on:
   push:
     branches: [main]
 
+# OIDC needs id-token:write; checkout needs contents:read. Nothing more.
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys of the same branch at once.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    name: Build, push, and deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      K8S_NAMESPACE: contextflow
+      K8S_DEPLOYMENT: web
+      IMAGE_TAG: ${{ github.sha }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      # Keyless auth: exchange the GitHub OIDC token for ~1h AWS creds by
+      # assuming the Terraform-created role (trust is scoped to this repo/main).
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image to ECR
+      # Build once, tag with the immutable commit SHA (traceable; forces a real
+      # rollout), push to ECR. set -e -o pipefail -> any failure stops here.
+      - name: Build and push image
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: contextflow
-          IMAGE_TAG: ${{ github.sha }}
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          set -euo pipefail
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Building $IMAGE"
+          docker build -t "$IMAGE" .
+          echo "Pushing $IMAGE"
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            aws ecr get-login-password --region ap-south-1 | \
-              docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
-            docker pull ${{ secrets.ECR_REGISTRY }}/contextflow:latest
-            docker stop contextflow || true
-            docker rm contextflow || true
-            docker run -d \
-              --name contextflow \
-              --restart unless-stopped \
-              -p 5000:5000 \
-              -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
-              -e GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_CF }} \
-              ${{ secrets.ECR_REGISTRY }}/contextflow:latest
+      # Deploy on the node via SSM. The remote script (set -e) runs the rolling
+      # update; on failure it dumps diagnostics. We poll the SSM command to a
+      # terminal state, print the node's output, and fail unless it succeeded.
+      - name: Deploy to k3s via SSM (rolling update)
+        run: |
+          set -euo pipefail
+          echo "Deploying $IMAGE"
+          echo "Target: deployment/$K8S_DEPLOYMENT (ns $K8S_NAMESPACE) on $EC2_INSTANCE_ID"
+
+          # Script that runs ON the node (as root, via SSM). set -e makes any
+          # kubectl failure exit non-zero -> SSM records the command as Failed.
+          cat > deploy.sh <<EOF
+          set -e
+          echo "[node] set image deployment/$K8S_DEPLOYMENT $K8S_DEPLOYMENT=$IMAGE"
+          k3s kubectl -n $K8S_NAMESPACE set image deployment/$K8S_DEPLOYMENT $K8S_DEPLOYMENT=$IMAGE
+          echo "[node] waiting for rollout (timeout 180s)..."
+          if ! k3s kubectl -n $K8S_NAMESPACE rollout status deployment/$K8S_DEPLOYMENT --timeout=180s; then
+            echo "[node] ROLLOUT FAILED — diagnostics:"
+            k3s kubectl -n $K8S_NAMESPACE get pods -o wide || true
+            k3s kubectl -n $K8S_NAMESPACE describe deployment/$K8S_DEPLOYMENT | tail -n 40 || true
+            k3s kubectl -n $K8S_NAMESPACE get events --sort-by=.lastTimestamp | tail -n 20 || true
+            exit 1
+          fi
+          echo "[node] rollout complete:"
+          k3s kubectl -n $K8S_NAMESPACE get deployment/$K8S_DEPLOYMENT -o wide
+          EOF
+
+          # Encode the whole script as one RunShellScript command (robust JSON).
+          jq -n --rawfile s deploy.sh '{commands: [$s]}' > params.json
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy $IMAGE_TAG" \
+            --parameters file://params.json \
+            --query "Command.CommandId" --output text)
+          echo "SSM CommandId: $CMD_ID"
+
+          # Poll to a terminal state (our own timeout > the node rollout timeout,
+          # so we never declare failure while the rollout is still running).
+          STATUS="Pending"
+          for _ in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 5
+          done
+
+          # Surface the node's output regardless of outcome, then enforce success.
+          echo "----- remote stdout -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" --query "StandardOutputContent" --output text || true
+          echo "----- remote stderr -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" --query "StandardErrorContent" --output text || true
+          echo "SSM final status: $STATUS"
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error title=Deploy failed::SSM status $STATUS — see remote output above"
+            exit 1
+          fi
+          echo "Rolling update succeeded: $IMAGE"

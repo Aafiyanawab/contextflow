@@ -84,3 +84,34 @@ resource "aws_iam_role_policy" "github_ecr_push" {
     ]
   })
 }
+
+# Deploy permission for the CI role: run the rolling update on the k3s node via
+# SSM Run Command — no SSH, no open ports, no stored keys. Least-privilege:
+# SendCommand is scoped to exactly OUR instance and ONLY the managed
+# AWS-RunShellScript document; the poll action can't be resource-scoped.
+resource "aws_iam_role_policy" "github_ssm_deploy" {
+  name = "${var.project}-github-ssm-deploy"
+  role = aws_iam_role.github_actions.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "SsmSendCommandToDeployTarget"
+        Effect   = "Allow"
+        Action   = "ssm:SendCommand"
+        Resource = [
+          aws_instance.k3s.arn,
+          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
+        ]
+      },
+      {
+        # Poll the command's terminal status + output. GetCommandInvocation
+        # does not support resource-level scoping, so Resource must be "*".
+        Sid      = "SsmReadCommandResult"
+        Effect   = "Allow"
+        Action   = "ssm:GetCommandInvocation"
+        Resource = "*"
+      }
+    ]
+  })
+}

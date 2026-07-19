@@ -44,3 +44,12 @@ resource "aws_iam_instance_profile" "ec2" {
   name = "${var.project}-ec2-profile"
   role = aws_iam_role.ec2.name
 }
+
+# 4. SSM: register the box as an SSM-managed node so CI can deploy via Run
+# Command (no SSH, no inbound ports). The SSM agent uses these permissions
+# through the instance role; the CI role is authorized separately to SEND the
+# commands (see github_oidc.tf). AWS-managed policy = the standard baseline.
+resource "aws_iam_role_policy_attachment" "ec2_ssm" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
