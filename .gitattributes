@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings — a CRLF entrypoint.sh fails inside the
+# Linux container with "no such file or directory" (the shebang line breaks).
+*.sh text eol=lf
+entrypoint.sh text eol=lf

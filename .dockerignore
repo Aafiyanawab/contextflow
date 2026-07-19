@@ -1,5 +1,30 @@
-.env
+# Keep the build context small and secrets/dev-cruft out of the image.
+.git/
+.gitignore
+.gitattributes
 __pycache__/
 *.pyc
-.git/
+*.pyo
+*.pyd
+
+# Secrets & local config — injected at runtime via env, never baked in.
+.env
+.env.*
+!.env.example
+
+# Virtualenvs
 venv/
+.venv/
+
+# Local dev database & uploaded files (ephemeral; not part of the image)
+instance/
+*.db
+*.sqlite3
+
+# Docs / CI / editor noise not needed at runtime
+docs/
+.github/
+*.md
+.DS_Store
+.vscode/
+.idea/

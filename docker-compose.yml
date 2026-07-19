@@ -1,0 +1,81 @@
+# Local production-like stack: the app on gunicorn + Postgres + MinIO (an
+# S3-compatible object store standing in for AWS S3). One command:
+#     docker compose up --build
+# Secrets (SECRET_KEY, OPENAI_API_KEY, GITHUB_TOKEN, OAuth) are read from
+# your existing .env via ${VAR} substitution — they are NOT baked into the
+# image. Everything here is local/dev; production values differ.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: contextflow
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: contextflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"          # exposed so you can inspect with psql/DBeaver
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contextflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"          # S3 API
+      - "9001:9001"          # web console (http://localhost:9001)
+
+  # One-shot: create the uploads bucket, then exit. `web` waits for it.
+  createbucket:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do
+        echo 'waiting for minio...'; sleep 1;
+      done;
+      mc mb --ignore-existing local/contextflow-uploads;
+      exit 0;
+      "
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      createbucket:
+        condition: service_completed_successfully
+    environment:
+      # ---- secrets from your .env ----
+      SECRET_KEY: ${SECRET_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # ---- Postgres (the app just reads DATABASE_URL) ----
+      DATABASE_URL: postgresql+psycopg2://contextflow:devpassword@db:5432/contextflow
+      # ---- S3 via MinIO ----
+      S3_BUCKET: contextflow-uploads
+      S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+    ports:
+      - "5000:5000"
+
+volumes:
+  pgdata:
+  miniodata:

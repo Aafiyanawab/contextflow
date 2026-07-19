@@ -11,6 +11,14 @@ python-docx==1.2.0
 numpy==2.2.6
 tiktoken==0.13.0
 
+# Deployment (Phase 0 — containerization):
+#   gunicorn        production WSGI server (replaces Flask's dev server)
+#   psycopg2-binary PostgreSQL driver (SQLAlchemy talks to Postgres through it)
+#   boto3           AWS S3 client (prod uploads; MinIO stands in for S3 locally)
+gunicorn==23.0.0
+psycopg2-binary==2.9.10
+boto3==1.40.47
+
 # Transitive security floors (OSV audit 2026-07-06): versions below
 # these carry known CVEs (decompression bombs, header leaks, OpenSSL).
 cryptography>=49.0.0

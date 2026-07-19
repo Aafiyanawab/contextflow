@@ -39,7 +39,7 @@ from app.ingest.extract import ALLOWED_EXTENSIONS
 from app.ingest.github_source import sync_github_documents
 from app.ingest.repo_sync import sync_repository
 from app.ratelimit import rate_limit
-from app.storage import LocalStorage
+from app.storage import get_storage
 from openai import OpenAI
 
 load_dotenv()
@@ -69,9 +69,10 @@ migrate = Migrate(app, db, render_as_batch=True)
 
 init_auth(app)
 
-# The AWS seam: production swaps this for an S3-backed class with the
-# same interface (see app/storage.py).
-storage = LocalStorage(os.path.join(app.instance_path, "uploads"))
+# The AWS seam: get_storage() returns an S3-backed store when S3_BUCKET is
+# set (production, or docker-compose via MinIO); otherwise it writes to
+# local disk. Same four-method interface either way (see app/storage.py).
+storage = get_storage(os.path.join(app.instance_path, "uploads"))
 
 
 @app.before_request
