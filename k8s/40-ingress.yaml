@@ -1,0 +1,19 @@
+# Ingress: routes outside HTTP traffic into the cluster.
+# Path: browser -> localhost:8088 -> k3d loadbalancer -> Traefik (ingress
+# controller) -> this Ingress rule -> web Service :80 -> web pod :5000.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: contextflow
+  namespace: contextflow
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80

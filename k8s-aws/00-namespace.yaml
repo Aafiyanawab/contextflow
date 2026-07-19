@@ -1,0 +1,6 @@
+# Cloud (AWS) manifests. Unlike k8s/ (local k3d with in-cluster Postgres+MinIO),
+# these point the app at managed AWS: RDS Postgres, real S3, image pulled from ECR.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: contextflow

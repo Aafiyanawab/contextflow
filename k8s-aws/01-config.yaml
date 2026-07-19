@@ -1,0 +1,14 @@
+# Non-secret configuration. Note what is ABSENT vs local:
+#   - no S3_ENDPOINT_URL  -> boto3 talks to real AWS S3 (not MinIO)
+#   - no AWS_ACCESS_KEY_* -> the pod assumes the EC2 instance role via IMDS
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: contextflow-config
+  namespace: contextflow
+data:
+  S3_BUCKET: "contextflow-uploads-989126025192"
+  AWS_REGION: "us-east-1"
+  AWS_DEFAULT_REGION: "us-east-1"
+  # RDS host, used by the initContainer to wait for the DB before the app starts.
+  DB_HOST: "contextflow-db.c6h0mogm6r1n.us-east-1.rds.amazonaws.com"

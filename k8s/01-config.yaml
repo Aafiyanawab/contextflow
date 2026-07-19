@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: contextflow-config
+  namespace: contextflow
+data:
+  # Non-secret settings the pods read as environment variables.
+  POSTGRES_USER: contextflow
+  POSTGRES_DB: contextflow
+  S3_BUCKET: contextflow-uploads
+  S3_ENDPOINT_URL: "http://minio:9000"
+  AWS_REGION: us-east-1

@@ -1,0 +1,60 @@
+# The app. Image is PULLED FROM ECR (k3s authenticates via the instance role,
+# credentials in /etc/rancher/k3s/registries.yaml). The entrypoint runs
+# `flask db upgrade` against RDS, then gunicorn — so RDS must be reachable first.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: contextflow
+spec:
+  replicas: 1 # 1 for now: the rate limiter is per-process
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      initContainers:
+        - name: wait-for-rds
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z $DB_HOST 5432; do echo 'waiting for RDS'; sleep 2; done"
+          envFrom:
+            - configMapRef: { name: contextflow-config }
+      containers:
+        - name: web
+          image: 989126025192.dkr.ecr.us-east-1.amazonaws.com/contextflow-web:latest
+          imagePullPolicy: Always # pull from ECR every rollout (real CI uses SHA tags)
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef: { name: contextflow-config } # S3_BUCKET, AWS_REGION, DB_HOST
+            - secretRef: { name: contextflow-secrets } # SECRET_KEY, DATABASE_URL, API keys
+          readinessProbe:
+            httpGet: { path: /login, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: { path: /login, port: 5000 }
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: contextflow
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 5000
