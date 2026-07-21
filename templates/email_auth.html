@@ -35,10 +35,16 @@
             <input class="field" type="email" id="email" name="email" required
                    autocomplete="email" placeholder="you@example.com" autofocus>
             <label for="password">Password</label>
-            <input class="field" type="password" id="password" name="password" required
-                   autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
-                   minlength="{{ 8 if mode == 'signup' else 1 }}"
-                   placeholder="{{ 'At least 8 characters' if mode == 'signup' else 'Your password' }}">
+            <div class="field-wrap">
+                <input class="field" type="password" id="password" name="password" required
+                       autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
+                       minlength="{{ 8 if mode == 'signup' else 1 }}"
+                       placeholder="{{ 'At least 8 characters' if mode == 'signup' else 'Your password' }}">
+                <button type="button" class="pw-toggle" aria-label="Show password">Show</button>
+            </div>
+            {% if mode != "signup" %}
+            <a class="login-forgot" href="{{ url_for('auth.forgot_password') }}">Forgot password?</a>
+            {% endif %}
             <button class="btn primary" type="submit" style="justify-content:center; margin-top:4px">
                 {{ "Create account" if mode == "signup" else "Sign in" }}
             </button>
@@ -57,5 +63,6 @@
     <p class="login-foot">ContextFlow · Context Engineering Platform</p>
 </main>
 
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
 </body>
 </html>

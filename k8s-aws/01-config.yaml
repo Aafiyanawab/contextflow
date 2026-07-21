@@ -12,3 +12,11 @@ data:
   AWS_DEFAULT_REGION: "us-east-1"
   # RDS host, used by the initContainer to wait for the DB before the app starts.
   DB_HOST: "contextflow-db.c6h0mogm6r1n.us-east-1.rds.amazonaws.com"
+  # Absolute base URL for links in emails (password reset). Set explicitly so
+  # links never depend on the request Host header (spoofable — reset-link
+  # poisoning). Update to the https:// custom domain when TLS lands.
+  APP_BASE_URL: "http://98.92.135.208"
+  # Transactional email (Gmail SMTP) — non-secret parts only. SMTP_USER,
+  # SMTP_PASSWORD and SMTP_FROM live in the contextflow-secrets Secret.
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"

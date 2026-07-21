@@ -57,6 +57,8 @@ class User(db.Model):
                                  cascade="all, delete-orphan")
     workspaces = db.relationship("Workspace", backref="owner",
                                  cascade="all, delete-orphan")
+    reset_tokens = db.relationship("PasswordResetToken", backref="user",
+                                   cascade="all, delete-orphan")
 
 
 class Company(db.Model):
@@ -92,6 +94,22 @@ class OAuthIdentity(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (db.UniqueConstraint("provider", "provider_uid"),)
+
+
+class PasswordResetToken(db.Model):
+    """A single-use, expiring password-reset grant. Only the SHA-256 HASH of
+    the emailed token is stored, so a database leak can't reset an account.
+    The row is deleted on a successful reset (and superseded when a new reset
+    is requested), so a missing row means the token was already used, has
+    expired, or was never valid — that absence is how single-use is enforced."""
+    __tablename__ = "password_reset_token"
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    user_id = db.Column(db.String(32), db.ForeignKey("user.id"),
+                        nullable=False, index=True)
+    # sha256 hex of the raw token; the raw token exists only in the email link.
+    token_hash = db.Column(db.String(64), nullable=False, unique=True)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
 
 class Workspace(db.Model):

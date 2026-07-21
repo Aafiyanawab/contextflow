@@ -57,8 +57,13 @@ NAIVE_RAG_K = 8        # the baseline we measure savings against
 
 VALID_INTENTS = [
     "infrastructure",
-    "deployment", 
+    "deployment",
     "monitoring",
     "security",
     "troubleshooting"
 ]
+
+# ── Password reset ───────────────────────────────────────
+# Reset links are single-use and expire exactly 5 minutes after generation.
+# Short by design: a reset grant is high-value, so its window is small.
+PASSWORD_RESET_TTL_SECONDS = 300

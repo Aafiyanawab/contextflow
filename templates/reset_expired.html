@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset link expired — ContextFlow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="login-body">
+
+<main class="login-wrap">
+    <div class="card login-card">
+        <h1>Reset link expired</h1>
+        <p class="login-sub">This password reset link has expired or is no longer
+            valid. Reset links last <b>5 minutes</b> and can be used once. Request
+            a new one to continue.</p>
+        <a class="btn primary" href="{{ url_for('auth.forgot_password') }}"
+           style="justify-content:center">Request a new reset link</a>
+    </div>
+    <p class="login-foot">ContextFlow · Context Engineering Platform</p>
+</main>
+
+</body>
+</html>

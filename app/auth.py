@@ -12,10 +12,12 @@ unsafe-method request that doesn't echo it back — forms via a hidden
 (read from the meta tag in base.html). SameSite=Lax already blocks
 most cross-site posts; the token is defense in depth.
 """
+import hashlib
 import hmac
 import os
 import re
 import secrets
+from datetime import timedelta, timezone
 from functools import wraps
 
 from flask import (Blueprint, abort, current_app, g, jsonify, redirect,
@@ -23,8 +25,10 @@ from flask import (Blueprint, abort, current_app, g, jsonify, redirect,
 from authlib.integrations.flask_client import OAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from app.models import db, User, OAuthIdentity, utcnow
+from app.models import db, User, OAuthIdentity, PasswordResetToken, utcnow
 from app.ratelimit import throttle
+from app.email import send_password_reset_email
+from app.config import PASSWORD_RESET_TTL_SECONDS
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LEN = 8
@@ -43,6 +47,7 @@ LOGIN_ERRORS = {
     "invalid_email": "Enter a valid email address.",
     "throttled": "Too many attempts. Please wait a minute and try again.",
     "account_disabled": "This account has been deactivated. Contact an administrator.",
+    "passwords_mismatch": "Those passwords don't match.",
 }
 
 
@@ -362,3 +367,101 @@ def _email_error(mode, error_key, next_url):
 def logout():
     session.clear()
     return redirect(url_for("auth.login"))
+
+
+# ── Password reset ───────────────────────────────────────
+# Email-based, single-use, 5-minute links. Only the sha256 HASH of the token
+# is stored; the raw token lives only in the emailed link. Requesting a reset
+# invalidates every prior token for that user, and a successful reset deletes
+# them all — so only the newest link ever works, exactly once.
+
+def _hash_token(raw):
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _expired(expires_at):
+    """SQLite hands back naive datetimes even for tz-aware columns, so treat a
+    naive value as UTC — otherwise comparing it to utcnow() (aware) raises
+    "can't compare offset-naive and offset-aware datetimes"."""
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at <= utcnow()
+
+
+def _reset_link(raw_token):
+    """Absolute reset URL. Uses APP_BASE_URL (an https:// production URL) when
+    set, else the request's own scheme/host — so the link becomes HTTPS the
+    moment the app is served over HTTPS, with no code change."""
+    path = url_for("auth.reset_password", token=raw_token)
+    base = os.getenv("APP_BASE_URL")
+    if base:
+        return base.rstrip("/") + path
+    return url_for("auth.reset_password", token=raw_token, _external=True)
+
+
+@auth_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if g.user:
+        return redirect(url_for("index"))
+    if request.method == "GET":
+        return render_template("forgot_password.html", sent=False, error=None)
+
+    email = (request.form.get("email") or "").strip().lower()
+    # Throttle by IP and by target email (brute force + email bombing).
+    if throttle("auth", _auth_key(), 10, 60) or throttle("reset", email, 5, 900):
+        return render_template("forgot_password.html", sent=False,
+                               error=LOGIN_ERRORS["throttled"]), 429
+
+    if EMAIL_RE.match(email):
+        user = User.query.filter_by(email=email).first()
+        if user:
+            # A new request invalidates every previous token for this user.
+            PasswordResetToken.query.filter_by(user_id=user.id).delete()
+            raw = secrets.token_urlsafe(32)
+            db.session.add(PasswordResetToken(
+                user_id=user.id, token_hash=_hash_token(raw),
+                expires_at=utcnow() + timedelta(seconds=PASSWORD_RESET_TTL_SECONDS)))
+            db.session.commit()
+            try:
+                send_password_reset_email(user.email, _reset_link(raw))
+            except Exception:
+                # A mail-server failure must never 500 the user or (via a
+                # different response) reveal that this account exists.
+                current_app.logger.exception("password reset email send failed")
+    # Enumeration-safe: identical confirmation whether or not the email exists.
+    return render_template("forgot_password.html", sent=True, error=None)
+
+
+@auth_bp.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    if g.user:
+        return redirect(url_for("index"))
+    row = PasswordResetToken.query.filter_by(token_hash=_hash_token(token)).first()
+    if row is None or _expired(row.expires_at):
+        # One page for expired / used / superseded / never-valid — it reveals
+        # nothing about which (enumeration-safe).
+        return render_template("reset_expired.html"), 400
+
+    if request.method == "GET":
+        return render_template("reset_password.html", token=token, error=None)
+
+    password = request.form.get("password") or ""
+    confirm = request.form.get("confirm") or ""
+    if len(password) < MIN_PASSWORD_LEN:
+        return render_template("reset_password.html", token=token,
+                               error=LOGIN_ERRORS["weak_password"]), 400
+    if password != confirm:
+        return render_template("reset_password.html", token=token,
+                               error=LOGIN_ERRORS["passwords_mismatch"]), 400
+
+    # Re-verify at write time (the link could have expired between GET and POST).
+    row = PasswordResetToken.query.filter_by(token_hash=_hash_token(token)).first()
+    if row is None or _expired(row.expires_at):
+        return render_template("reset_expired.html"), 400
+
+    user = row.user
+    user.password_hash = generate_password_hash(password)
+    # Single-use + invalidate every outstanding token for this user.
+    PasswordResetToken.query.filter_by(user_id=user.id).delete()
+    db.session.commit()
+    return render_template("reset_success.html")

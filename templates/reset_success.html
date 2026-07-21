@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Password reset — ContextFlow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="login-body">
+
+<main class="login-wrap">
+    <div class="card login-card">
+        <h1>Password updated</h1>
+        <p class="login-sub">Your password has been reset. For your security the
+            reset link is now invalid. Sign in with your new password to continue.</p>
+        <a class="btn primary" href="{{ url_for('auth.login_email') }}"
+           style="justify-content:center">Sign in</a>
+    </div>
+    <p class="login-foot">ContextFlow · Context Engineering Platform</p>
+</main>
+
+</body>
+</html>
