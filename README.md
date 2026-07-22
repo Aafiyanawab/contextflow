@@ -75,8 +75,6 @@ The application integrates with:
 ---
 📁 Project Structure
 
-## 📁 Project Structure
-
 ```text
 contextflow/
 ├── app.py                 # Flask app + routes (chat, workspaces, admin)
