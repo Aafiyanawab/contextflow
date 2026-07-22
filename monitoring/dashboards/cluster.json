@@ -1,0 +1,62 @@
+{
+  "title": "ContextFlow — Kubernetes & Node",
+  "uid": "cf-cluster",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Scrape targets up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "count(up == 1)", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Running pods",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "count(count by (pod) (container_memory_working_set_bytes{pod!=\"\"}))", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Node memory used",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(node_memory_working_set_bytes)", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Node CPU (cores)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(rate(node_cpu_usage_seconds_total[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Node memory working set",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(node_memory_working_set_bytes)", "legendFormat": "node", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Node CPU usage (cores)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(rate(node_cpu_usage_seconds_total[5m]))", "legendFormat": "node", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Memory by pod (working set)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum by (pod) (container_memory_working_set_bytes{namespace!=\"\", pod!=\"\"})", "legendFormat": "{{pod}}", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "CPU by pod (cores)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace!=\"\", pod!=\"\"}[5m]))", "legendFormat": "{{pod}}", "refId": "A" } ]
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Repository Inventory{% endblock %}
+{% block admin_sub %}{{ rows|length }} connected repositor{{ "ies" if rows|length != 1 else "y" }}. Detected stack is stored at connect/sync and reused — the AI never re-scans per question.{% endblock %}
+
+{% block admin_body %}
+<div class="card tbl-card">
+    <div class="tbl-scroll">
+    <table class="tbl tbl-sticky">
+        <thead><tr>
+            <th>Repository</th><th>Owner</th><th>Branch</th>
+            <th>Last commit</th><th>Last sync</th>
+            <th>Language</th><th>Framework</th><th>Cloud</th>
+            <th class="num">Docker</th><th class="num">K8s</th><th class="num">Terraform</th>
+            <th>CI/CD</th><th>Pkg mgr</th><th class="num">Docs</th>
+            <th class="num">Size</th><th>Health</th>
+        </tr></thead>
+        <tbody>
+            {% for r in rows %}
+            {% set p = r.p %}
+            <tr>
+                <td>
+                    <span class="tbl-name">{{ r.repo_name }}</span>
+                    {% if r.owner_user %}<span class="tbl-email">{{ r.owner_user.email }}</span>{% endif %}
+                </td>
+                <td class="meta">{{ r.owner or "—" }}</td>
+                <td class="meta">{{ r.src.default_branch or "—" }}</td>
+                <td class="meta">{{ r.src.last_synced_commit_sha[:7] if r.src.last_synced_commit_sha else "—" }}</td>
+                <td class="meta">{{ r.src.last_ingested_at|timeago if r.src.last_ingested_at else "—" }}</td>
+                <td>{{ (p.language or "—")|ctxval }}</td>
+                <td>{{ (p.framework or "—")|ctxval }}</td>
+                <td>{{ (p.cloud or "—")|ctxval }}</td>
+                <td class="num">{% if p.containerization == 'docker' %}<span class="badge badge-good">✓</span>{% else %}<span class="meta">—</span>{% endif %}</td>
+                <td class="num">{% if p.orchestration == 'kubernetes' %}<span class="badge badge-good">✓</span>{% else %}<span class="meta">—</span>{% endif %}</td>
+                <td class="num">{% if p.iac == 'terraform' %}<span class="badge badge-good">✓</span>{% else %}<span class="meta">—</span>{% endif %}</td>
+                <td>{{ (p.cicd or "—")|ctxval }}</td>
+                <td class="meta">{{ p.package_manager or "—" }}</td>
+                <td class="num">{{ r.documents }}</td>
+                <td class="num meta">{{ (p.repo_size_kb * 1024)|filesizeformat if p.repo_size_kb else "—" }}</td>
+                <td><span class="badge badge-{{ r.health[0] }}">{{ r.health[1] }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="16"><div class="empty-state"><p>No repositories connected yet. Connect a GitHub repo to a workspace and it appears here after discovery.</p></div></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+<p class="usage-link" style="cursor:default">Stack, package manager and size are captured during repository discovery (connect / sync) and stored on the source — re-sync a repo to refresh its inventory.</p>
+{% endblock %}

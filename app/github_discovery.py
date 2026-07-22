@@ -62,6 +62,29 @@ FRAMEWORK_HINTS = {
 }
 
 
+# Package manager, inferred from lockfiles/manifests (first match wins).
+PACKAGE_MANAGERS = [
+    ("pnpm", ["pnpm-lock.yaml"]),
+    ("yarn", ["yarn.lock"]),
+    ("npm", ["package-lock.json", "package.json"]),
+    ("poetry", ["poetry.lock"]),
+    ("pip", ["requirements.txt", "Pipfile", "setup.py", "pyproject.toml"]),
+    ("maven", ["pom.xml"]),
+    ("gradle", ["build.gradle", "build.gradle.kts"]),
+    ("go modules", ["go.mod"]),
+    ("cargo", ["Cargo.toml"]),
+]
+
+
+def detect_package_manager(file_paths):
+    """Infer the dependency manager from manifest/lockfile basenames."""
+    names = {p.rsplit("/", 1)[-1] for p in file_paths}
+    for manager, markers in PACKAGE_MANAGERS:
+        if any(marker in names for marker in markers):
+            return manager
+    return None
+
+
 def get_all_file_paths(repo):
     """Get all file paths in a repository."""
     try:
@@ -188,6 +211,20 @@ def discover_repo_context(repo_url: str, progress=None) -> dict:
     # Detect framework from code files
     context["framework"] = detect_framework(repo, file_paths)
     report("framework", context["framework"] or "not found")
+
+    # ── Repository Inventory enrichment ──
+    # Extra metadata persisted alongside the detected stack so the admin
+    # Repository Inventory (and the AI) read stored facts instead of
+    # re-scanning per question. owner/repo_name parsed from the URL;
+    # package manager inferred from manifests; size from the GitHub API.
+    context["owner"] = repo_name.split("/")[0]
+    context["repo_name"] = repo_name.split("/")[-1]
+    context["package_manager"] = detect_package_manager(file_paths)
+    context["file_count"] = len(file_paths)
+    try:
+        context["repo_size_kb"] = repo.size  # GitHub reports repo size in KB
+    except Exception:
+        context["repo_size_kb"] = None
 
     # Remove None values
     context = {k: v for k, v in context.items() if v is not None}

@@ -27,7 +27,8 @@ from app.config import (OPENAI_API_KEY, OPENAI_MODEL, CAPSULE_FLOOR,
                         CAPSULE_ASSIGN_THRESHOLD, CAPSULE_SYNTHESIS_CHUNKS)
 from app.embeddings import pack, unpack
 from app.ingest.chunking import count_tokens
-from app.models import db, Capsule, CapsuleChunk, Chunk, utcnow
+from app.models import db, Capsule, CapsuleChunk, Chunk, Workspace, utcnow
+from app import semantic_cache
 
 _client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -123,6 +124,16 @@ def refresh_workspace(workspace_id, progress=None):
 
     _link_related(capsules)
     db.session.commit()
+
+    # Knowledge just changed → bump the workspace's knowledge_version and
+    # drop its semantic-cache entries. The bump alone makes prior entries
+    # un-matchable (lookup filters on the version); invalidate() reclaims
+    # the rows. Cache faults are swallowed and never affect capsules.
+    ws = db.session.get(Workspace, workspace_id)
+    if ws is not None:
+        ws.knowledge_version = (ws.knowledge_version or 1) + 1
+        db.session.commit()
+        semantic_cache.invalidate(workspace_id)
     return {"total": len(capsules), "synthesized": synthesized}
 
 

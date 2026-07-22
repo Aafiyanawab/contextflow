@@ -1,0 +1,71 @@
+{
+  "title": "ContextFlow — Application",
+  "uid": "cf-app",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Requests/sec",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(rate(contextflow_http_requests_total[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Error rate (5xx) /s",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.1 } ] } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(rate(contextflow_http_requests_total{status=~\"5..\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Avg response time",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_response_ms_avg", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Completion tokens",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_tokens_out_total", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Request rate by endpoint",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum by (endpoint) (rate(contextflow_http_requests_total[5m]))", "legendFormat": "{{endpoint}}", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Request latency (p50 / p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(contextflow_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(contextflow_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Responses by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum by (status) (rate(contextflow_http_requests_total[5m]))", "legendFormat": "{{status}}", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Token usage (in / out, cumulative)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "contextflow_tokens_in_total", "legendFormat": "in", "refId": "A" },
+        { "expr": "contextflow_tokens_out_total", "legendFormat": "out", "refId": "B" }
+      ]
+    }
+  ]
+}

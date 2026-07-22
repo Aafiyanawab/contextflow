@@ -3,6 +3,27 @@
 {% block admin_sub %}Inspect ContextFlow's AI retrieval engine, indexed knowledge, knowledge graph, retrieval health and workspace indexing.{% endblock %}
 
 {% block admin_body %}
+<div class="section">
+    <span class="lbl">Repository Inventory</span>
+    <div class="stat-grid">
+        <div class="stat"><span class="stat-ico">🐙</span><span class="stat-k">Repositories</span><b class="stat-v">{{ inventory.total }}</b></div>
+        <div class="stat"><span class="stat-ico">▤</span><span class="stat-k">Indexed</span><b class="stat-v">{{ inventory.indexed }}</b></div>
+        <div class="stat"><span class="stat-ico">⬢</span><span class="stat-k">Docker</span><b class="stat-v">{{ inventory.docker }}</b></div>
+        <div class="stat"><span class="stat-ico">☸</span><span class="stat-k">Kubernetes</span><b class="stat-v">{{ inventory.kubernetes }}</b></div>
+        <div class="stat"><span class="stat-ico">△</span><span class="stat-k">Terraform</span><b class="stat-v">{{ inventory.terraform }}</b></div>
+        <div class="stat"><span class="stat-ico">◈</span><span class="stat-k">Health issues</span><b class="stat-v {{ 'warn' if inventory.errored else '' }}">{{ inventory.errored }}</b></div>
+    </div>
+    {% if inventory.languages or inventory.clouds %}
+    <div class="card pad" style="margin-top:10px">
+        <div class="ctx-grid">
+            {% if inventory.languages %}<div class="ctx-cell"><span class="k">Languages</span><b>{% for name, n in inventory.languages %}{{ name|ctxval }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}</b></div>{% endif %}
+            {% if inventory.clouds %}<div class="ctx-cell"><span class="k">Cloud platforms</span><b>{% for name, n in inventory.clouds %}{{ name|ctxval }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}</b></div>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+    <p class="usage-link"><a href="{{ url_for('admin_inventory') }}">Open full Repository Inventory →</a></p>
+</div>
+
 {% if not rows %}
 <div class="card"><div class="empty-state"><p>No workspaces to inspect yet.</p></div></div>
 {% else %}

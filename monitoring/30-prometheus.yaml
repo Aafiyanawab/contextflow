@@ -1,0 +1,77 @@
+# Prometheus: single replica, tight limits, 24h retention, 2Gi local-path
+# volume. ClusterIP only. The metrics-token Secret (created out-of-band,
+# see docs/MONITORING.md) holds the Bearer token for the app scrape.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: monitoring
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels: { app: prometheus }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # single RWO volume — no rolling overlap
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsUser: 65534        # nobody
+        runAsNonRoot: true
+        fsGroup: 65534          # own the PVC so the TSDB is writable
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=24h
+            - --storage.tsdb.retention.size=1GB
+            - --web.enable-lifecycle           # POST /-/reload to hot-reload
+            - --web.listen-address=:9090
+          ports:
+            - containerPort: 9090
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { memory: "300Mi" }
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: secrets, mountPath: /etc/prometheus/secrets, readOnly: true }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: secrets
+          secret: { secretName: metrics-token }
+        - name: data
+          persistentVolumeClaim: { claimName: prometheus-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector: { app: prometheus }
+  ports:
+    - port: 9090
+      targetPort: 9090

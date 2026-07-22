@@ -1,0 +1,9 @@
+# Dedicated namespace for the observability stack. Everything here is
+# ClusterIP-only — no Ingress — so Prometheus and Grafana are reachable
+# only in-cluster (via `kubectl port-forward`). See docs/MONITORING.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring

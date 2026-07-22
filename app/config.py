@@ -67,3 +67,22 @@ VALID_INTENTS = [
 # Reset links are single-use and expire exactly 5 minutes after generation.
 # Short by design: a reset grant is high-value, so its window is small.
 PASSWORD_RESET_TTL_SECONDS = 300
+
+# ── Semantic cache ───────────────────────────────────────
+# A response cache keyed by question *meaning*, not exact text. Sits
+# between intent detection and the Context Builder → OpenAI call; a hit
+# returns the previously-generated answer verbatim (no model call).
+# Env-overridable so ops can tune/disable without a redeploy.
+#   SEMANTIC_CACHE_BACKEND selects the storage adapter behind the port in
+#   app/semantic_cache.py — "orm" (brute-force cosine over the SQL store)
+#   today; a Redis/ANN adapter can be registered and named here later
+#   with no change to the chat pipeline.
+SEMANTIC_CACHE_ENABLED = os.getenv("SEMANTIC_CACHE_ENABLED", "1") != "0"
+SEMANTIC_CACHE_BACKEND = os.getenv("SEMANTIC_CACHE_BACKEND", "orm")
+# Cosine similarity (unit-norm embeddings) above which two questions are
+# treated as the same. High by design: only genuine paraphrases hit, so
+# distinct questions never collide onto a wrong cached answer.
+SEMANTIC_CACHE_THRESHOLD = float(os.getenv("SEMANTIC_CACHE_THRESHOLD", "0.92"))
+# Time-to-live. Even without a knowledge change, entries expire so answers
+# can't drift arbitrarily far from the live model/data. Default 24h.
+SEMANTIC_CACHE_TTL_SECONDS = int(os.getenv("SEMANTIC_CACHE_TTL_SECONDS", "86400"))

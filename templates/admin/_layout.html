@@ -19,6 +19,9 @@
 <a class="s-nav-link {% if admin_tab == 'ai' %}on{% endif %}" href="{{ url_for('admin_ai_tools') }}">
     <span class="s-nav-ico">✦</span>AI Diagnostics
 </a>
+<a class="s-nav-link {% if admin_tab == 'inventory' %}on{% endif %}" href="{{ url_for('admin_inventory') }}">
+    <span class="s-nav-ico">▤</span>Repository Inventory
+</a>
 <a class="s-nav-link {% if admin_tab == 'companies' %}on{% endif %}" href="{{ url_for('admin_companies') }}">
     <span class="s-nav-ico">◫</span>Companies
 </a>

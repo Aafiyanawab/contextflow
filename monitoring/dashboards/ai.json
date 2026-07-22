@@ -1,0 +1,82 @@
+{
+  "title": "ContextFlow — AI, Cache & Inventory",
+  "uid": "cf-ai",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1, "type": "gauge", "title": "Cache hit rate",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_semantic_cache_hits_total / clamp_min(contextflow_semantic_cache_hits_total + contextflow_semantic_cache_misses_total, 1)", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Cache entries (live)",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_semantic_cache_entries", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Repositories (indexed / total)",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "contextflow_repositories_indexed", "legendFormat": "indexed", "refId": "A" },
+        { "expr": "contextflow_repositories_total", "legendFormat": "total", "refId": "B" }
+      ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Knowledge Index entries",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_knowledge_index_total", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Cache hits vs misses (rate)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(contextflow_semantic_cache_hits_total[10m])", "legendFormat": "hits/s", "refId": "A" },
+        { "expr": "rate(contextflow_semantic_cache_misses_total[10m])", "legendFormat": "misses/s", "refId": "B" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Documents & chunks indexed",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "contextflow_documents_total", "legendFormat": "documents", "refId": "A" },
+        { "expr": "contextflow_chunks_total", "legendFormat": "chunks", "refId": "B" },
+        { "expr": "contextflow_chunks_embedded", "legendFormat": "embedded", "refId": "C" }
+      ]
+    },
+    {
+      "id": 7, "type": "stat", "title": "Workspaces",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_workspaces_total", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "stat", "title": "Companies",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_companies_total", "refId": "A" } ]
+    },
+    {
+      "id": 9, "type": "stat", "title": "Users",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_users_total", "refId": "A" } ]
+    },
+    {
+      "id": 10, "type": "stat", "title": "AI answers total",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "contextflow_ai_answers_total", "refId": "A" } ]
+    }
+  ]
+}

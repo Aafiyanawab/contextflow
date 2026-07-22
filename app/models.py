@@ -120,6 +120,12 @@ class Workspace(db.Model):
     user_id = db.Column(db.String(32), db.ForeignKey("user.id"), nullable=False)
     name = db.Column(db.String(120), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    # Monotonic "knowledge changed" counter. Bumped whenever this
+    # workspace's indexed knowledge changes (sync/ingest → capsule
+    # refresh). The Semantic Cache stamps entries with the version they
+    # were built under, so a bump makes every prior entry stale — that's
+    # how "invalidate the cache when repo knowledge changes" is enforced.
+    knowledge_version = db.Column(db.Integer, nullable=False, default=1)
 
     chats = db.relationship(
         "Chat",
@@ -135,6 +141,11 @@ class Workspace(db.Model):
     )
     capsules = db.relationship(
         "Capsule",
+        backref="workspace",
+        cascade="all, delete-orphan",
+    )
+    cache_entries = db.relationship(
+        "SemanticCacheEntry",
         backref="workspace",
         cascade="all, delete-orphan",
     )
@@ -327,4 +338,43 @@ class Message(db.Model):
     context_tokens = db.Column(db.Integer, nullable=False, default=0)  # actually sent
     naive_tokens = db.Column(db.Integer, nullable=False, default=0)    # naive-RAG baseline
 
+    # Semantic-cache accounting (assistant messages). cache_hit marks an
+    # answer served from the Semantic Cache (no OpenAI call); response_ms
+    # is wall-clock time to first-complete answer — cache hits are ~instant,
+    # so these two feed the hit-rate / cost-saved / latency cards in AI
+    # Diagnostics without a separate stats table.
+    cache_hit = db.Column(db.Boolean, nullable=False, default=False)
+    response_ms = db.Column(db.Integer, nullable=False, default=0)
+
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+
+class SemanticCacheEntry(db.Model):
+    """One cached question→answer pair for the Semantic Cache.
+
+    This is the *persistence shape* only; all cache policy (similarity
+    scoring, freshness) lives in app/semantic_cache.py behind a storage
+    port, so this table can be replaced by Redis/an ANN index without
+    the model leaking into the chat pipeline. Entries are scoped per
+    workspace and stamped with the workspace's knowledge_version at
+    store time; a later version, or a passed expires_at, makes them
+    stale. question_embedding is a packed unit-norm float32 vector
+    (app.embeddings.pack), the same representation as chunk embeddings."""
+    __tablename__ = "semantic_cache_entry"
+    id = db.Column(db.String(32), primary_key=True, default=_uuid)
+    workspace_id = db.Column(db.String(32), db.ForeignKey("workspace.id"),
+                             nullable=False, index=True)
+    question = db.Column(db.Text, nullable=False)
+    question_embedding = db.Column(db.LargeBinary, nullable=False)
+    response = db.Column(db.Text, nullable=False)
+    # Snapshot of the repo/stack context the answer was grounded in
+    # (ws.context_profile at store time) — stored per the spec and useful
+    # for auditing why an answer was cached.
+    repo_context = db.Column(db.JSON, nullable=False, default=dict)
+    knowledge_version = db.Column(db.Integer, nullable=False, default=1)
+    model = db.Column(db.String(40))
+    tokens_in = db.Column(db.Integer, nullable=False, default=0)
+    tokens_out = db.Column(db.Integer, nullable=False, default=0)
+    hit_count = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)

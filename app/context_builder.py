@@ -12,6 +12,13 @@ BROAD_MARKERS = (
     "what do my", "what are the main", "walk me through",
 )
 
+# The canonical detected-stack keys. A repo profile ALSO carries
+# inventory-only fields (owner, repo_name, package_manager, repo_size_kb,
+# file_count) — those must never reach the model. Restricting the prompt
+# stack line to these keys keeps profile enrichment out of prompts.
+STACK_KEYS = ("cloud", "iac", "containerization", "orchestration",
+              "cicd", "language", "framework")
+
 
 def wants_summaries(query: str, route: dict, min_breadth=10):
     """Rules-first broad-vs-narrow call — no LLM. → (bool, reason).
@@ -40,8 +47,8 @@ def build_prompt_context(profile, capsules, include_summaries, chunks):
     means the model answers from the system prompt + history alone."""
     parts = []
     if profile:
-        stack = [CONTEXT_VALUES.get(v, v) for k, v in profile.items()
-                 if k != "repo" and v]
+        stack = [CONTEXT_VALUES.get(profile[k], profile[k])
+                 for k in STACK_KEYS if profile.get(k)]
         if stack:
             parts.append("User's stack: " + ", ".join(stack))
     if include_summaries:

@@ -7,6 +7,7 @@ import queue
 import re
 import secrets
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from flask import (Flask, g, render_template, request, jsonify, redirect,
@@ -33,6 +34,7 @@ from app.config import (RETRIEVAL_TOKEN_BUDGET, RETRIEVAL_K,
                         NAIVE_RAG_K)
 from app.embeddings import (embed_query, search as vector_search,
                             capsule_chunk_ids)
+from app import semantic_cache
 from app.ingest.chunking import count_tokens
 from app.ingest import ingest_upload_batch
 from app.ingest.extract import ALLOWED_EXTENSIONS
@@ -68,6 +70,12 @@ db.init_app(app)
 migrate = Migrate(app, db, render_as_batch=True)
 
 init_auth(app)
+
+# Prometheus metrics: GET /metrics (token-gated). Read-only observability —
+# see app/metrics.py. Registered after auth so its before/after_request
+# timing hooks wrap every route.
+from app.metrics import init_metrics  # noqa: E402
+init_metrics(app)
 
 # The AWS seam: get_storage() returns an S3-backed store when S3_BUCKET is
 # set (production, or docker-compose via MinIO); otherwise it writes to
@@ -969,8 +977,12 @@ def context_split(intent, discovered):
     and which are deliberately withheld (with the reason)."""
     relevant = INTENT_CONTEXT_MAP.get(intent, [])
     injected, withheld = [], []
-    for key, value in discovered.items():
-        if key == "repo":
+    # Only the detected-stack keys are prompt context; inventory-only
+    # profile fields (owner, repo_name, package_manager, repo_size_kb,
+    # file_count) are never injected or shown as "withheld context".
+    for key in OVERVIEW_KEYS:
+        value = discovered.get(key)
+        if not value:
             continue
         entry = {"key": key,
                  "label": OVERVIEW_LABELS.get(key, key),
@@ -1179,6 +1191,18 @@ def post_message(chat_id):
         "budget": RETRIEVAL_TOKEN_BUDGET, "summary_reason": summary_reason,
         "summaries_injected": include_summaries}
 
+    # ── Semantic cache lookup (before the model call) ──
+    # Reuses the query embedding already computed for routing — no extra
+    # embedding spend. A hit returns the prior answer verbatim and skips
+    # the OpenAI call. Greetings (no embedding) are already free, so skip.
+    knowledge_version = ws.knowledge_version
+    cache_hit = None
+    if not is_greeting and query_vec is not None:
+        cache_hit = semantic_cache.lookup(ws.id, query_vec, knowledge_version)
+    if cache_hit is not None:
+        orchestration = {**orchestration, "cache_hit": True,
+                         "cache_similarity": round(cache_hit.similarity, 3)}
+
     is_first = len(active_chat.messages) == 0
     needs_title = is_first and active_chat.title == "New chat"
     history = [{"role": m.role, "content": m.content}
@@ -1190,6 +1214,7 @@ def post_message(chat_id):
         # handler, so re-fetch the row here — mutations on objects captured
         # from the request scope would silently not persist.
         chat_row = db.session.get(Chat, chat_pk)
+        t_start = time.monotonic()  # wall-clock to complete answer (response_ms)
 
         # The user's message is recorded before the model is called,
         # so a failed API call never loses what they typed.
@@ -1199,7 +1224,7 @@ def post_message(chat_id):
         chat_row.updated_at = utcnow()
         db.session.commit()
 
-        def persist_assistant(answer, tokens_in, tokens_out):
+        def persist_assistant(answer, tokens_in, tokens_out, response_ms=0):
             db.session.add(Message(
                 chat_id=chat_pk, role="assistant", content=answer,
                 intent=intent, method=method, matched_keywords=matched,
@@ -1207,7 +1232,8 @@ def post_message(chat_id):
                 capsules_used=cap_used, capsules_withheld=cap_withheld,
                 chunks_used=chunks_meta, context_tokens=context_tokens,
                 naive_tokens=naive_tokens,
-                tokens_in=tokens_in, tokens_out=tokens_out))
+                tokens_in=tokens_in, tokens_out=tokens_out,
+                response_ms=response_ms))
             chat_row.updated_at = utcnow()
             db.session.commit()
 
@@ -1224,6 +1250,32 @@ def post_message(chat_id):
             persist_assistant(reply, 0, 0)
             yield _sse({"type": "done", "tokens_in": 0, "tokens_out": 0,
                         "title": chat_row.title,
+                        "usage": usage_stats(ws_pk),
+                        "user_usage": usage_stats(user_id=owner_pk)})
+            return
+
+        # ── Semantic cache HIT: stream the stored answer, no model call ──
+        # No API tokens are spent, so this message records tokens_in/out=0
+        # (existing cost/usage accounting stays truthful — a hit is free);
+        # cache_hit + response_ms feed the AI Diagnostics cache cards.
+        if cache_hit is not None:
+            reply = cache_hit.response
+            for word in reply.split(" "):
+                yield _sse({"type": "token", "content": word + " "})
+            db.session.add(Message(
+                chat_id=chat_pk, role="assistant", content=reply,
+                intent=intent, method=method, matched_keywords=matched,
+                injected_context=injected, withheld_context=withheld,
+                capsules_used=[], capsules_withheld=[], chunks_used=[],
+                context_tokens=0, naive_tokens=0, tokens_in=0, tokens_out=0,
+                cache_hit=True,
+                response_ms=int((time.monotonic() - t_start) * 1000)))
+            if needs_title:
+                chat_row.title = _generate_title(query) or chat_row.title
+            chat_row.updated_at = utcnow()
+            db.session.commit()
+            yield _sse({"type": "done", "tokens_in": 0, "tokens_out": 0,
+                        "cached": True, "title": chat_row.title,
                         "usage": usage_stats(ws_pk),
                         "user_usage": usage_stats(user_id=owner_pk)})
             return
@@ -1256,7 +1308,16 @@ def post_message(chat_id):
             yield _sse({"type": "error", "message": _friendly_llm_error(str(e))})
             return
 
-        persist_assistant(answer, tokens_in, tokens_out)
+        response_ms = int((time.monotonic() - t_start) * 1000)
+        persist_assistant(answer, tokens_in, tokens_out, response_ms=response_ms)
+        # Cache this fresh answer for future semantically-similar questions
+        # (same workspace + knowledge_version). Stored once, on the miss
+        # only — a subsequent hit serves it without re-storing.
+        if not is_greeting and query_vec is not None and answer:
+            semantic_cache.store(ws_pk, query, query_vec, answer,
+                                 knowledge_version, repo_context=discovered,
+                                 model=OPENAI_MODEL, tokens_in=tokens_in,
+                                 tokens_out=tokens_out)
         # ChatGPT-style title from the first exchange (fallback already set).
         if needs_title:
             better = _generate_title(query)
@@ -1860,6 +1921,73 @@ def admin_assign_company(user_id):
     return redirect(request.referrer or url_for("admin_companies"))
 
 
+# ── Repository Inventory (Super Admin) ──
+def _parse_repo_owner(uri):
+    """GitHub owner from a repo URL ('…/owner/repo' → 'owner')."""
+    if not uri:
+        return None
+    parts = uri.rstrip("/").split("/")
+    return parts[-2] if len(parts) >= 2 else None
+
+
+def _repo_inventory_rows(scope_ids=None):
+    """One row per connected GitHub source, built from its PERSISTED
+    discovery profile + index/health state. Never re-scans a repo —
+    discovery runs at connect/sync and the result is stored in profile."""
+    q = (KnowledgeSource.query
+         .join(Workspace, KnowledgeSource.workspace_id == Workspace.id)
+         .filter(KnowledgeSource.type == "github"))
+    if scope_ids is not None:
+        q = q.filter(Workspace.user_id.in_(scope_ids or ["\0"]))
+    sources = q.order_by(KnowledgeSource.created_at.desc()).all()
+    ws_owner = {w.id: w.user_id for w in Workspace.query.all()}
+    owners = {u.id: u for u in User.query.all()}
+    doc_c = dict(db.session.query(Document.source_id, func.count(Document.id))
+                 .group_by(Document.source_id).all())
+    rows = []
+    for s in sources:
+        p = s.profile or {}
+        docs = doc_c.get(s.id, 0)
+        if s.status == "error":
+            health = ("bad", "Error")
+        elif s.status in ("pending", "ingesting"):
+            health = ("warn", "Indexing")
+        elif docs == 0:
+            health = ("muted", "Not indexed")
+        else:
+            health = ("good", "Healthy")
+        rows.append({
+            "src": s, "p": p, "documents": docs, "health": health,
+            "owner": p.get("owner") or _parse_repo_owner(s.uri),
+            "repo_name": p.get("repo_name") or s.name,
+            "owner_user": owners.get(ws_owner.get(s.workspace_id))})
+    return rows
+
+
+def _inventory_stats(scope_ids=None):
+    """Aggregate Repository Inventory numbers for the AI Diagnostics header:
+    totals, index/health state, and detected-tech tallies."""
+    rows = _repo_inventory_rows(scope_ids)
+    langs, clouds = {}, {}
+    docker = kubernetes = terraform = indexed = healthy = errored = 0
+    for r in rows:
+        p = r["p"]
+        if p.get("language"):
+            langs[p["language"]] = langs.get(p["language"], 0) + 1
+        if p.get("cloud"):
+            clouds[p["cloud"]] = clouds.get(p["cloud"], 0) + 1
+        docker += p.get("containerization") == "docker"
+        kubernetes += p.get("orchestration") == "kubernetes"
+        terraform += p.get("iac") == "terraform"
+        indexed += r["documents"] > 0
+        healthy += r["health"][1] == "Healthy"
+        errored += r["health"][1] == "Error"
+    top = lambda d: sorted(d.items(), key=lambda kv: -kv[1])  # noqa: E731
+    return {"total": len(rows), "indexed": indexed, "healthy": healthy,
+            "errored": errored, "docker": docker, "kubernetes": kubernetes,
+            "terraform": terraform, "languages": top(langs), "clouds": top(clouds)}
+
+
 # ── AI / Developer tools (the moved internals live here) ──
 def _ai_diagnostics(ws_id):
     """Read-only retrieval-engine health for one workspace (Super Admin
@@ -1909,7 +2037,19 @@ def admin_ai_tools():
         detail = {"ws": ws, "cells": cells, "capsules": _capsule_cards(ws.id),
                   "diag": _ai_diagnostics(ws.id)}
     return render_template("admin/ai_tools.html", active_nav="admin",
-                           admin_tab="ai", rows=rows, detail=detail)
+                           admin_tab="ai", rows=rows, detail=detail,
+                           inventory=_inventory_stats(_scope_ids()))
+
+
+@app.route("/admin/inventory")
+@super_admin_required
+def admin_inventory():
+    """Repository Inventory (Super Admin): every connected repo with its
+    detected stack, index state and health. Read-only — reads the stored
+    discovery profile, never re-scans."""
+    rows = _repo_inventory_rows(_scope_ids())
+    return render_template("admin/inventory.html", active_nav="admin",
+                           admin_tab="inventory", rows=rows)
 
 
 # ── Audit log & system (Super Admin only) ──
