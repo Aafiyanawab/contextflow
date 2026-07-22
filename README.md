@@ -1,6 +1,6 @@
 AI-powered enterprise knowledge platform that understands your GitHub repositories, delivers repository-aware answers, and cuts unnecessary LLM calls with a semantic cache.
 
-[![Deploy](https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml/badge.svg)](https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml)
+
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-RDS-4169E1?logo=postgresql&logoColor=white)
