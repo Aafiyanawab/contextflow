@@ -1,16 +1,14 @@
-@Web search ContextFlow
+AI-powered enterprise knowledge platform that understands your GitHub repositories, delivers repository-aware answers, and cuts unnecessary LLM calls with a semantic cache.
 
-▎ AI-powered enterprise knowledge platform that understands your GitHub repositories, delivers repository-aware answers, and cuts unnecessary LLM calls with a semantic cache.
-
-Deploy (https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml/badge.svg) (https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml)
-Python (https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-Flask (https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)
-PostgreSQL (https://img.shields.io/badge/PostgreSQL-RDS-4169E1?logo=postgresql&logoColor=white)
-Docker (https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker&logoColor=white)
-Kubernetes (https://img.shields.io/badge/Kubernetes-k3s-326CE5?logo=kubernetes&logoColor=white)
-Prometheus (https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus&logoColor=white)
-Grafana (https://img.shields.io/badge/Grafana-Dashboards-F46800?logo=grafana&logoColor=white)
-License (https://img.shields.io/badge/License-MIT-green)
+[![Deploy](https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml/badge.svg)](https://github.com/Aafiyanawab/contextflow/actions/workflows/deploy.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-RDS-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-k3s-326CE5?logo=kubernetes&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?logo=grafana&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 Overview
@@ -42,27 +40,20 @@ The public demo URL will be published in a future update.
 ---
 🏗️ Architecture
 
-```mermaid
-flowchart TD
-    U([User]) --> D[Public URL]
-    D --> T[Traefik Ingress]
-    T --> APP
+ContextFlow consists of the following core components:
 
-    subgraph APP[ContextFlow]
-        direction TB
-        AUTH[Authentication]
-        CHAT[AI Chat]
-        IE[Intent Engine]
-        CB[Context Builder]
-        SC[Semantic Cache]
-        RI[Repository Inventory]
-    end
+- Authentication
+- AI Chat
+- Intent Engine
+- Context Builder
+- Semantic Cache
+- Repository Inventory
 
-    APP --> PG[(PostgreSQL)]
-    APP --> GH[GitHub API]
-    APP --> OAI[OpenAI API]
+The application integrates with:
 
-```
+- PostgreSQL
+- GitHub API
+- OpenAI API
 ---
 
 🧰 Technology Stack
@@ -101,27 +92,31 @@ contextflow/
 ---
 🚀 CI/CD Workflow
 
-Every push to main triggers a keyless (OIDC) build, pushes a SHA-tagged image to ECR, and rolls it out to k3s via AWS SSM — no stored keys, no open SSH ports. Migrations run automatically on startup.
+## 🚀 CI/CD Workflow
 
-```mermaid
-flowchart LR
-    DEV([Developer]) --> GH[GitHub] --> GA[GitHub Actions] --> ECR[Amazon ECR] --> K8S[Kubernetes k3s on EC2]
+Every push to `main` automatically:
 
-```
+1. Triggers GitHub Actions
+2. Builds a Docker image
+3. Pushes the image to Amazon ECR
+4. Deploys the latest image to the Kubernetes (k3s) cluster on Amazon EC2
+5. Applies database migrations during application startup
 ---
 📊 Monitoring
 
-A lightweight, internal-only stack. The app exposes a token-gated /metrics endpoint scraped by Prometheus and visualized in Grafana (cluster, application, and AI/cache/inventory dashboards).
 
-```mermaid
-flowchart LR
-    CF[ContextFlow] -->|/metrics| P[Prometheus] --> G[Grafana]
-```
+The application exposes a token-protected `/metrics` endpoint.
+
+Monitoring stack:
+
+- Prometheus
+- Grafana
 
 > **Note**
->
+
 > Version 1 intentionally uses a lightweight Prometheus + Grafana monitoring stack.
 > AWS CloudWatch has not been implemented and is reserved for a future release.
+```
 
 ---
 ⚙️ Installation
