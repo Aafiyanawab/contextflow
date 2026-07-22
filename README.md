@@ -75,6 +75,9 @@ The application integrates with:
 ---
 📁 Project Structure
 
+## 📁 Project Structure
+
+```text
 contextflow/
 ├── app.py                 # Flask app + routes (chat, workspaces, admin)
 ├── manage.py              # CLI entrypoint (migrations, set-admin)
@@ -86,14 +89,15 @@ contextflow/
 ├── .gitignore
 ├── .gitattributes
 ├── app/                   # auth, models, intent_engine, context_builder,
-│                          # semantic_cache, github_discovery, metrics, ingest/
+│                           # semantic_cache, github_discovery, metrics, ingest/
 ├── templates/             # Jinja2 templates
 ├── static/                # CSS, JavaScript and assets
 ├── migrations/            # Alembic database migrations
 ├── monitoring/            # Prometheus + Grafana manifests & dashboards
 ├── k8s-aws/               # Kubernetes manifests
 ├── terraform/             # AWS infrastructure (EC2, RDS, ECR, IAM/OIDC)
-└── docs/                  # Architecture & decisions
+└── docs/                  # Architecture, monitoring and project documentation
+```
 
 ---
 🚀 CI/CD Workflow
@@ -121,7 +125,6 @@ Monitoring stack:
 > Version 1 intentionally uses a lightweight Prometheus + Grafana monitoring stack.
 > AWS CloudWatch has not been implemented and is reserved for a future release.
 ```
-
 ---
 ⚙️ Installation
 
@@ -161,10 +164,14 @@ git commit -m "your changes"
 git push origin main
 ```
 
-GitHub Actions authenticates via OIDC, builds and pushes the image to ECR, and performs a rolling update on k3s. Deploy the monitoring stack once:
+GitHub Actions authenticates via OIDC, builds and pushes the image to ECR, and performs a rolling update on k3s. 
 
+Deploy the monitoring stack once:
+
+```bash
 kubectl apply -f monitoring/
 kubectl -n monitoring port-forward svc/grafana 3000:3000
+```
 
 ---
 🔮 Future Improvements
