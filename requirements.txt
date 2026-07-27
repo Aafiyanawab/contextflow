@@ -21,7 +21,7 @@ boto3==1.40.47
 
 # Observability (Prometheus): client for the /metrics endpoint. Pure-Python,
 # no native deps — negligible footprint.
-prometheus-client==0.23.1
+prometheus-client==0.26.0
 
 # Transitive security floors (OSV audit 2026-07-06): versions below
 # these carry known CVEs (decompression bombs, header leaks, OpenSSL).
