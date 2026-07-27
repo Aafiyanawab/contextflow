@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ── Security gate 1 (SCA): dependencies + secrets in the repo. Runs
       # before any AWS auth so vulnerable code never reaches a build. Fails
