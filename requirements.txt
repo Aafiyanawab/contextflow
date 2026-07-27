@@ -16,7 +16,7 @@ tiktoken==0.13.0
 #   psycopg2-binary PostgreSQL driver (SQLAlchemy talks to Postgres through it)
 #   boto3           AWS S3 client (prod uploads; MinIO stands in for S3 locally)
 gunicorn==23.0.0
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.12
 boto3==1.40.47
 
 # Observability (Prometheus): client for the /metrics endpoint. Pure-Python,
