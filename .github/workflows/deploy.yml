@@ -41,6 +41,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ── Security gate 1 (SCA): dependencies + secrets in the repo. Runs
+      # before any AWS auth so vulnerable code never reaches a build. Fails
+      # only on FIXABLE High/Critical vulnerabilities (ignore-unfixed) to
+      # avoid blocking on unpatchable base-OS CVEs.
+      - name: Trivy filesystem scan (dependencies & secrets)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # ── Security gate 2 (IaC): Terraform, Kubernetes, and Dockerfile
+      # misconfigurations. Report-only (exit-code 0) so infra best-practice
+      # findings surface in the logs without blocking the deploy — set
+      # exit-code to '1' to enforce once the reported items are triaged.
+      - name: Trivy IaC scan (Terraform & Kubernetes)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
       # Keyless auth: exchange the GitHub OIDC token for ~1h AWS creds by
       # assuming the Terraform-created role (trust is scoped to this repo/main).
       - name: Configure AWS credentials (OIDC)
@@ -55,7 +81,9 @@ jobs:
 
       # Build once, tag with the immutable commit SHA (traceable; forces a real
       # rollout), push to ECR. set -e -o pipefail -> any failure stops here.
-      - name: Build and push image
+      # Build the image locally FIRST so it can be scanned before it is pushed
+      # to ECR. IMAGE is exported for the scan, push, and deploy steps.
+      - name: Build image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -63,9 +91,24 @@ jobs:
           IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "Building $IMAGE"
           docker build -t "$IMAGE" .
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # ── Security gate 3 (image): scan the built image; a FIXABLE High/Critical
+      # vulnerability blocks the push to ECR (fail-closed before publish).
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Push image to Amazon ECR
+        run: |
+          set -euo pipefail
           echo "Pushing $IMAGE"
           docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       # Deploy on the node via SSM. The remote script (set -e) runs the rolling
       # update; on failure it dumps diagnostics. We poll the SSM command to a

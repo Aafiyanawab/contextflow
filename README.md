@@ -13,6 +13,7 @@ AI-powered enterprise knowledge platform that understands your GitHub repositori
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=for-the-badge&logo=terraform&logoColor=white)
 
 </p>
 
@@ -60,6 +61,7 @@ The application integrates with:
 - PostgreSQL
 - GitHub API
 - OpenAI API
+- AWS Services
 ---
 
 🧰 Technology Stack
@@ -77,24 +79,30 @@ The application integrates with:
 
 ```text
 contextflow/
-├── app.py                 # Flask app + routes (chat, workspaces, admin)
-├── manage.py              # CLI entrypoint (migrations, set-admin)
-├── wsgi.py                # WSGI entrypoint (gunicorn)
-├── Dockerfile             # Container image build
-├── docker-compose.yml     # Local multi-service stack
-├── entrypoint.sh          # flask db upgrade -> gunicorn
-├── requirements.txt       # Python dependencies
+├── .github/
+│   ├── workflows/
+│   │   ├── deploy.yml          # CI/CD pipeline
+│   │   └── codeql.yml          # CodeQL security scanning
+│   └── dependabot.yml          # Automated dependency updates
+├── app.py                      # Flask app + routes (chat, workspaces, admin)
+├── manage.py                   # CLI entrypoint (migrations, set-admin)
+├── wsgi.py                     # WSGI entrypoint (gunicorn)
+├── Dockerfile                  # Container image build
+├── docker-compose.yml          # Local multi-service stack
+├── entrypoint.sh               # Flask db upgrade → Gunicorn
+├── requirements.txt            # Python dependencies
 ├── .gitignore
 ├── .gitattributes
-├── app/                   # auth, models, intent_engine, context_builder,
-│                           # semantic_cache, github_discovery, metrics, ingest/
-├── templates/             # Jinja2 templates
-├── static/                # CSS, JavaScript and assets
-├── migrations/            # Alembic database migrations
-├── monitoring/            # Prometheus + Grafana manifests & dashboards
-├── k8s-aws/               # Kubernetes manifests
-├── terraform/             # AWS infrastructure (EC2, RDS, ECR, IAM/OIDC)
-└── docs/                  # Architecture, monitoring and project documentation
+├── app/                        # auth, models, intent_engine,
+│                                # context_builder, semantic_cache,
+│                                # github_discovery, metrics, ingest/
+├── templates/                  # Jinja2 templates
+├── static/                     # CSS, JavaScript and assets
+├── migrations/                 # Alembic database migrations
+├── monitoring/                 # Prometheus & Grafana manifests
+├── k8s-aws/                    # Kubernetes manifests
+├── terraform/                  # AWS infrastructure (EC2, RDS, ECR, IAM/OIDC)
+└── docs/                       # Architecture, monitoring & documentation
 ```
 
 ---
@@ -107,6 +115,17 @@ Every push to `main` automatically:
 3. Pushes the image to Amazon ECR
 4. Deploys the latest image to the Kubernetes (k3s) cluster on Amazon EC2
 5. Applies database migrations during application startup
+
+---
+🔒 DevSecOps
+
+Automated security and dependency checks run in CI before every deployment:
+
+- **GitHub Actions** — orchestrates the build → scan → deploy stages.
+- **CodeQL (SAST)** — scans Python for security and code-quality issues; results upload to the GitHub Security tab.
+- **Trivy** — scans dependencies & secrets, IaC (Terraform & Kubernetes), and the built Docker image, failing the pipeline on HIGH/CRITICAL vulnerabilities before the image is pushed to ECR.
+- **Dependabot** — weekly dependency update PRs for pip, Docker, and GitHub Actions.
+
 ---
 📊 Monitoring
 
@@ -122,13 +141,13 @@ Monitoring stack:
 
 > Version 1 intentionally uses a lightweight Prometheus + Grafana monitoring stack.
 > AWS CloudWatch has not been implemented and is reserved for a future release.
-```
+
 ---
 ⚙️ Installation
 
 Prerequisites: Python 3.11+, PostgreSQL (or SQLite for local dev).
 
-```bash
+
 git clone https://github.com/Aafiyanawab/contextflow.git
 cd contextflow
 pip install -r requirements.txt

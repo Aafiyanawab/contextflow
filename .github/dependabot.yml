@@ -1,0 +1,27 @@
+# Automated dependency updates. Dependabot opens weekly PRs for outdated or
+# vulnerable dependencies across the three ecosystems this repo uses.
+version: 2
+updates:
+  # Python packages (requirements.txt at the repo root).
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+
+  # Base image in the Dockerfile.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "docker"]
+
+  # GitHub Actions used in .github/workflows/.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]

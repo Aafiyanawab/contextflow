@@ -1,0 +1,41 @@
+# CodeQL static analysis (SAST) for Python. Runs independently of the deploy
+# pipeline: on push/PR to main and weekly. Results are uploaded to the repo's
+# Security tab (Code scanning alerts). Free for public repositories; private
+# repos require GitHub Advanced Security.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '30 2 * * 1'   # weekly — Monday 02:30 UTC
+
+# Least privilege: write security events (SARIF upload), read code + actions.
+permissions:
+  security-events: write
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Python is interpreted — no build step is needed for CodeQL.
+      # security-and-quality runs BOTH the security and code-quality query packs.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"
