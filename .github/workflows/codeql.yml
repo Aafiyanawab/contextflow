@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Python is interpreted — no build step is needed for CodeQL.
       # security-and-quality runs BOTH the security and code-quality query packs.
