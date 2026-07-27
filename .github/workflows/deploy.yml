@@ -70,7 +70,7 @@ jobs:
       # Keyless auth: exchange the GitHub OIDC token for ~1h AWS creds by
       # assuming the Terraform-created role (trust is scoped to this repo/main).
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
