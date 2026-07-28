@@ -4,7 +4,7 @@
 # A separate build stage keeps pip, its cache, and any build tooling out of
 # the final image. We copy just the venv forward, so the runtime layer stays
 # small and has no build-time cruft.
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip "setuptools>=81.0.0,<82" wheel \
     && pip install -r requirements.txt
 
 # ---------- Stage 2: runtime — slim, non-root, venv copied in ----------
-FROM python:3.11-slim
+FROM python:3.14-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
