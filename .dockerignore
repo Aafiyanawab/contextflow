@@ -21,6 +21,14 @@ instance/
 *.db
 *.sqlite3
 
+# Infra & deploy manifests — provision/deploy the app, never run inside it.
+# Excluding terraform/ also keeps its local .terraform/ provider plugins (large
+# Go binaries that carry their own CVEs) out of the image; they are gitignored
+# so CI never sees them, but a local `docker build` would otherwise bake them in.
+terraform/
+k8s-aws/
+monitoring/
+
 # Docs / CI / editor noise not needed at runtime
 docs/
 .github/
