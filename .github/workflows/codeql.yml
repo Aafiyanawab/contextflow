@@ -30,12 +30,12 @@ jobs:
       # Python is interpreted — no build step is needed for CodeQL.
       # security-and-quality runs BOTH the security and code-quality query packs.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.37.4
         with:
           languages: python
           queries: security-and-quality
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.37.4
         with:
           category: "/language:python"
